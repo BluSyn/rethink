@@ -840,13 +840,13 @@ export default class Device extends TLVDevice {
         const descFull =
             desc + ' ' + (jetCool ? 'cool' : '') + (jetCool && jetHeat ? '/' : '') + (jetHeat ? 'heat' : '')
 
+        // No optimistic: true — HA would show assumed-state flash buttons instead of a toggle.
         const comp = {
             platform: 'switch',
             unique_id: '$deviceid-' + name,
             name: descFull,
             icon: icon,
             entity_category: 'config',
-            optimistic: true,
         }
         config['components'][name] = comp
 
@@ -995,13 +995,14 @@ export default class Device extends TLVDevice {
         field_name: 'airClean' | 'jetMode' | 'energySave',
         check_mode?: CheckMode,
     ) {
+        // No optimistic: true — same toggle UI as autodry / addConfigSwitchField.
+        // Mode/power gating still applies via read/write callbacks; state_topic supplies feedback.
         const comp = {
             platform: 'switch',
             unique_id: '$deviceid-' + name,
             name: desc,
             icon: icon,
             entity_category: 'config',
-            optimistic: true,
         }
         config['components'][name] = comp
 
