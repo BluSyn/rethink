@@ -644,13 +644,9 @@ export default class Device extends TLVDevice {
         }
 
         if (this.hasCapOrTag(0x2cc, 4, 0x20e)) {
-            const compADry = {
-                platform: 'binary_sensor',
-                unique_id: '$deviceid-autodry',
-                name: 'Auto dry',
-                icon: 'mdi:hair-dryer',
-                entity_category: 'diagnostic',
-            }
+            // CST capture: unsolicited 0x20e 1↔0 when toggled in ThinQ; same write path as other config switches.
+            this.addConfigSwitchField(config, 0x20e, 'autodry', 'Auto dry', 'mdi:hair-dryer')
+
             const compADryRem = {
                 platform: 'sensor',
                 unique_id: '$deviceid-autodryremain',
@@ -660,16 +656,7 @@ export default class Device extends TLVDevice {
                 suggested_display_precision: 0,
                 entity_category: 'diagnostic',
             }
-            config['components']['autodry'] = compADry
             config['components']['autodryremain'] = compADryRem
-
-            this.addField(config, {
-                id: 0x20e,
-                name: '',
-                comp: 'autodry',
-                writable: false,
-                read_xform: (raw) => (raw ? 'ON' : 'OFF'),
-            })
 
             this.addField(config, {
                 id: 0x225,

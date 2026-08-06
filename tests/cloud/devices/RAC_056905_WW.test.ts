@@ -215,6 +215,28 @@ describe(MODEL_ID, () => {
         dev.drop()
     })
 
+    // CST capture: autodry toggles as unsolicited 0x20e 1↔0; write is a single-tag TLV.
+    const WRITE_AUTODRY_ON_HEX = '010104000000650201010283816D5D'
+    const WRITE_AUTODRY_OFF_HEX = '010104000000650201010283807D7C'
+
+    test('HA write autodry ON/OFF emits 0x20e TLV', (t) => {
+        const { thinq, dev, ha } = buildReadyDevice(t)
+        dev.raw_clip_state[0x20e] = 0
+
+        ha.setProperty(DEVICE_ID, 'autodry', 'command', 'ON')
+        assert.equal(thinq.outbox.length, 1)
+        assert.equal(hex(thinq.outbox[0]), WRITE_AUTODRY_ON_HEX.toUpperCase())
+        assert.equal(dev.raw_clip_state[0x20e], 1)
+
+        thinq.resetRecorder()
+        ha.setProperty(DEVICE_ID, 'autodry', 'command', 'OFF')
+        assert.equal(thinq.outbox.length, 1)
+        assert.equal(hex(thinq.outbox[0]), WRITE_AUTODRY_OFF_HEX.toUpperCase())
+        assert.equal(dev.raw_clip_state[0x20e], 0)
+
+        dev.drop()
+    })
+
     test('constructor sends a queryCaps packet on the wire', () => {
         const { thinq, dev } = makeDevice()
         if (dev.query_caps_timeout) {
