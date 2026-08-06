@@ -313,7 +313,9 @@ export default class Device extends TLVDevice {
         // Humidity: 0x336 is tenths of a percent (850 → 85.0). Present on cassette and some other IDUs.
         if (this.hasTag(0x336)) {
             config.components.climate.current_humidity_topic = '$this/humidity-'
-            config.components.humidity = {
+            // Intermediate object (same pattern as filter sensors) so HA sensor fields
+            // are not excess-property-checked against ComponentInfo.
+            const humidity = {
                 platform: 'sensor',
                 unique_id: '$deviceid-humidity',
                 name: 'Humidity',
@@ -322,6 +324,7 @@ export default class Device extends TLVDevice {
                 state_class: 'measurement',
                 suggested_display_precision: 1,
             }
+            config.components.humidity = humidity
             this.addField(config, {
                 id: 0x336,
                 name: '',
