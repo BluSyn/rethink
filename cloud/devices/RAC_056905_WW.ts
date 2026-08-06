@@ -264,6 +264,20 @@ export default class Device extends TLVDevice {
         return undefined
     }
 
+    /** True if this tag was present in a values/notify packet (value may be 0). */
+    hasTag(id: number) {
+        return this.raw_clip_state[id] != null
+    }
+
+    /**
+     * Optional features are unlocked by caps feature-words when present.
+     * Some models (e.g. CST_570004_WW cassette) omit or use different caps bits
+     * but still report the state tags — unlock from either signal.
+     */
+    hasCapOrTag(capWord: number, capBit: number, stateTag: number) {
+        return !!(this.raw_clip_state[capWord] & capBit) || this.hasTag(stateTag)
+    }
+
     initMakeSetConfig() {
         const config: DeviceDiscovery & { components: { climate: ClimateComponent } } = allowExtendedType({
             ...HADevice.config(this.meta, { name: 'LG Air Conditioner' }),
@@ -295,6 +309,28 @@ export default class Device extends TLVDevice {
             writable: false,
             read_xform: (raw) => raw / 2,
         })
+
+        // Humidity: 0x336 is tenths of a percent (850 → 85.0). Present on cassette and some other IDUs.
+        if (this.hasTag(0x336)) {
+            config.components.climate.current_humidity_topic = '$this/humidity-'
+            config.components.humidity = {
+                platform: 'sensor',
+                unique_id: '$deviceid-humidity',
+                name: 'Humidity',
+                device_class: 'humidity',
+                unit_of_measurement: '%',
+                state_class: 'measurement',
+                suggested_display_precision: 1,
+            }
+            this.addField(config, {
+                id: 0x336,
+                name: '',
+                comp: 'humidity',
+                writable: false,
+                read_xform: (raw) => raw / 10,
+            })
+        }
+
         this.addField(config, {
             id: 0x1f7,
             name: 'power',
@@ -397,7 +433,7 @@ export default class Device extends TLVDevice {
             write_attach: [0x1f9, 0x1fa],
         })
 
-        if (this.raw_clip_state[0x2cd] & 4) {
+        if (this.hasCapOrTag(0x2cd, 4, 0x321)) {
             config['components']['climate']['swing_modes'] = ['1', '2', '3', '4', '5', '6', 'on', 'off']
             this.addField(config, {
                 id: 0x321,
@@ -424,7 +460,7 @@ export default class Device extends TLVDevice {
             })
         }
 
-        if (this.raw_clip_state[0x2cd] & 8) {
+        if (this.hasCapOrTag(0x2cd, 8, 0x322)) {
             config['components']['climate']['swing_horizontal_modes'] = [
                 '1',
                 '2',
@@ -561,7 +597,7 @@ export default class Device extends TLVDevice {
             (raw) => raw * 10,
         )
 
-        if (this.raw_clip_state[0x2cc] & 1) {
+        if (this.hasCapOrTag(0x2cc, 1, 0x20f)) {
             this.addModeDependentConfigSwitchField(
                 config,
                 0x20f,
@@ -573,23 +609,25 @@ export default class Device extends TLVDevice {
             )
         }
 
-        const jetCool: boolean = !!(this.raw_clip_state[0x2cd] & 1)
-        const jetHeat: boolean = !!(this.raw_clip_state[0x2cd] & 2)
+        // Jet: caps bits prefer cool/heat separately; if only the state tag is present, offer both.
+        const jetBits = (this.raw_clip_state[0x2cd] ?? 0) & 3
+        const jetCool: boolean = !!(jetBits & 1) || (this.hasTag(0x323) && jetBits === 0)
+        const jetHeat: boolean = !!(jetBits & 2) || (this.hasTag(0x323) && jetBits === 0)
         if (jetCool || jetHeat) {
             this.addJetField(config, 0x323, 'jet', 'Jet', 'mdi:wind-power', jetCool, jetHeat)
         }
 
-        if (this.raw_clip_state[0x2d3] & 1) {
+        if (this.hasCapOrTag(0x2d3, 1, 0x21a)) {
             // 15h - displayed in hex as "FH"
             this.addTimerField(config, 0x21a, 'sleeptimer', 'Sleep timer', 'mdi:bed-clock', 15)
         }
 
-        if (this.raw_clip_state[0x2d3] & 4) {
+        if (this.hasCapOrTag(0x2d3, 4, 0x21c) || this.hasTag(0x21b)) {
             this.addTimerField(config, 0x21c, 'starttimer', 'Turn-on timer', 'mdi:timer-play', 24)
             this.addTimerField(config, 0x21b, 'stoptimer', 'Turn-off timer', 'mdi:timer-stop', 24)
         }
 
-        if (this.raw_clip_state[0x2cc] & 2) {
+        if (this.hasCapOrTag(0x2cc, 2, 0x20d)) {
             // Can be enabled only when running in the cooling mode
             this.addModeDependentConfigSwitchField(
                 config,
@@ -602,7 +640,7 @@ export default class Device extends TLVDevice {
             )
         }
 
-        if (this.raw_clip_state[0x2cc] & 4) {
+        if (this.hasCapOrTag(0x2cc, 4, 0x20e)) {
             const compADry = {
                 platform: 'binary_sensor',
                 unique_id: '$deviceid-autodry',
