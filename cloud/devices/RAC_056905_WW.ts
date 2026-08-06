@@ -348,9 +348,12 @@ export default class Device extends TLVDevice {
                     this.setProperty('climate-power', 'OFF')
                     return null
                 }
+                // Explicit power-on: some wall RAC units wake from a mode write alone,
+                // but cassette/variants like CST_570004_WW ignore mode changes while off.
+                this.raw_clip_state[0x1f7] = 1
                 return modes2clip[val]
             },
-            write_attach: [0x1fa, 0x1fe],
+            write_attach: [0x1f7, 0x1fa, 0x1fe],
         })
 
         this.addField(config, {

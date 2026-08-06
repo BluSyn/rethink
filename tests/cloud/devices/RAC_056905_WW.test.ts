@@ -37,9 +37,10 @@ const QUERY_RESPONSE_HEX =
     'CC90438B40BF600155BFE00271BFA00155C0200271BE509FBE90A01B01BED050C300C340C0C0C380' +
     '3E6B'
 
-// Bytes that the device sends in response to specific HA setProperty calls.
-const WRITE_MODE_FAN_ONLY_HEX = '01010400000065020101067E427E837F80B452'
-const WRITE_MODE_HEAT_HEX = '01010400000065020101077E447E837F902AF936'
+// Bytes that the cloud sends for HA setProperty calls (includes 0x1f7 power-on with mode writes).
+const WRITE_MODE_FAN_ONLY_HEX = '01010400000065020101087E427DC17E837F80E609'
+const WRITE_MODE_HEAT_HEX = '01010400000065020101097E447DC17E837F902AFD3D'
+const WRITE_MODE_COOL_FROM_OFF_HEX = '01010400000065020101097E407DC17E887F902C8C89'
 const WRITE_POWER_OFF_HEX = '01010400000065020101027DC00576'
 
 function makeDevice() {
@@ -182,6 +183,23 @@ describe(MODEL_ID, () => {
 
         assert.equal(thinq.outbox.length, 1)
         assert.equal(hex(thinq.outbox[0]), WRITE_POWER_OFF_HEX.toUpperCase())
+
+        dev.drop()
+    })
+
+    test('HA write climate-mode=cool from OFF includes power=ON', (t) => {
+        const { thinq, dev, ha } = buildReadyDevice(t)
+        // Off-state matching a CST_570004_WW capture: power=0, last mode=cool, fan=auto, set=22C
+        dev.raw_clip_state[0x1f7] = 0
+        dev.raw_clip_state[0x1f9] = 0
+        dev.raw_clip_state[0x1fa] = 8
+        dev.raw_clip_state[0x1fe] = 44
+
+        ha.setProperty(DEVICE_ID, 'climate', 'mode_command', 'cool')
+
+        assert.equal(thinq.outbox.length, 1)
+        assert.equal(hex(thinq.outbox[0]), WRITE_MODE_COOL_FROM_OFF_HEX.toUpperCase())
+        assert.equal(dev.raw_clip_state[0x1f7], 1)
 
         dev.drop()
     })
