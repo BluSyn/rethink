@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, MockHaConnection, MockThinq2Device, Metadata};
+use rethink_core::{Thinq2Device, hex_decode, MockHaConnection, MockThinq2Device, Metadata};
 use rethink_devices::devices::rv13u6am8w_d_us_wifi::Device;
 
 const DEVICE_ID: &str = "test-id";
@@ -16,7 +16,8 @@ fn prop(ha: &MockHaConnection, n: &str) -> Option<String> {
 #[test]
 fn config_and_status() {
     let (ha, thinq, _) = make();
-    let comps = &ha.device(DEVICE_ID).unwrap().config.as_ref().unwrap().components;
+    let devinfo = ha.device(DEVICE_ID).unwrap();
+    let comps = &devinfo.config.as_ref().unwrap().components;
     for c in ["status","remaining_time","power","drum_running","cycle","temp","dry_level"] {
         assert!(comps.contains_key(c), "missing {c}");
     }

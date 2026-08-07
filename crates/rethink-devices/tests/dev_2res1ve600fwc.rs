@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
+use rethink_core::{Thinq2Device, hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
 use rethink_devices::device_trait::DeviceHandler;
 use rethink_devices::devices::dev_2res1ve600fwc::Device;
 
@@ -25,7 +25,8 @@ fn door_and_temps() {
     assert!(ha.device(DEVICE_ID).is_none());
 
     thinq.emit_data(&hex_decode("AA1E10EC02030501FFFFFF0001FF01FF02030501FFFFFF0101FF01FF80BB"));
-    let comps = &ha.device(DEVICE_ID).unwrap().config.as_ref().unwrap().components;
+    let devinfo = ha.device(DEVICE_ID).unwrap();
+    let comps = &devinfo.config.as_ref().unwrap().components;
     assert_eq!(comps["fridge_setpoint"]["unit_of_measurement"], "°C");
     assert_eq!(prop(&ha, "fridge_setpoint").as_deref(), Some("5"));
     assert_eq!(prop(&ha, "freezer_setpoint").as_deref(), Some("-18"));

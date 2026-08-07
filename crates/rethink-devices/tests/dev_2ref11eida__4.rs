@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
+use rethink_core::{Thinq2Device, hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
 use rethink_devices::device_trait::DeviceHandler;
 use rethink_devices::devices::dev_2ref11eida__4::Device;
 
@@ -37,7 +37,8 @@ fn not_until_status() {
 fn initial_fahrenheit() {
     let (ha, thinq, _) = make();
     thinq.emit_data(&hex_decode(SAMPLE_INITIAL));
-    let comps = &ha.device(DEVICE_ID).unwrap().config.as_ref().unwrap().components;
+    let devinfo = ha.device(DEVICE_ID).unwrap();
+    let comps = &devinfo.config.as_ref().unwrap().components;
     assert_eq!(comps["fridge_setpoint"]["unit_of_measurement"], "°F");
     assert_eq!(comps["fridge_setpoint"]["min"], 33);
     assert_eq!(comps["freezer_setpoint"]["min"], -7);

@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
+use rethink_core::{Thinq2Device, hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
 use rethink_devices::device_trait::DeviceHandler;
 use rethink_devices::devices::rh10v9_ch::{Device, MONITOR_INTERVAL_MS};
 use std::sync::atomic::Ordering;

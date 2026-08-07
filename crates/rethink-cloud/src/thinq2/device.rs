@@ -206,29 +206,41 @@ impl DeviceAcceptor {
             if let Some(d) = slot_send.lock().as_ref() {
                 d.notify_send(msg.clone());
             }
-            if let SendToDevice::T2Packet(buf) = msg {
-                let mid = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                let messagestr = serde_json::json!({
+            let mid = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let messagestr = match msg {
+                SendToDevice::T2Packet(buf) => serde_json::json!({
                     "did": did,
                     "mid": mid,
                     "cmd": "packet",
                     "type": 1,
                     "data": hex::encode(&buf),
-                });
-                broker.publish(
-                    PublishPacket {
-                        topic: format!("lime/devices/{did}"),
-                        payload: serde_json::to_vec(&messagestr).unwrap_or_default(),
-                        retain: false,
-                        qos: 0,
-                        dup: false,
-                    },
-                    None,
-                );
-            }
+                }),
+                SendToDevice::T2Clip {
+                    cmd,
+                    msg_type,
+                    data,
+                } => serde_json::json!({
+                    "did": did,
+                    "mid": mid,
+                    "cmd": cmd,
+                    "type": msg_type,
+                    "data": data,
+                }),
+                SendToDevice::T1Json(_) => return,
+            };
+            broker.publish(
+                PublishPacket {
+                    topic: format!("lime/devices/{did}"),
+                    payload: serde_json::to_vec(&messagestr).unwrap_or_default(),
+                    retain: false,
+                    qos: 0,
+                    dup: false,
+                },
+                None,
+            );
         });
 
         let dev = ConnectedDevice::new(

@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
+use rethink_core::{Thinq2Device, hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata};
 use rethink_devices::device_trait::DeviceHandler;
 use rethink_devices::devices::dev_2res1ve61nfa2::Device;
 
@@ -34,7 +34,8 @@ fn config_not_until_status() {
 fn initial_status() {
     let (ha, thinq, _) = make();
     thinq.emit_data(&hex_decode(SAMPLE_INITIAL));
-    let comps = &ha.device(DEVICE_ID).unwrap().config.as_ref().unwrap().components;
+    let devinfo = ha.device(DEVICE_ID).unwrap();
+    let comps = &devinfo.config.as_ref().unwrap().components;
     assert_eq!(comps["fridge_setpoint"]["unit_of_measurement"], "°C");
     assert!(comps.contains_key("express_cool"));
     assert_eq!(prop(&ha, "fridge_setpoint").as_deref(), Some("6"));

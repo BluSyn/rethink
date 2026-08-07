@@ -28,7 +28,13 @@ impl Thinq2Device for T2Adapter {
         (self.dev.send_to_device)(crate::devmgr::SendToDevice::T2Packet(buf.to_vec()));
     }
     fn send(&self, cmd: &str, msg_type: i32, data: serde_json::Value) {
-        let _ = (cmd, msg_type, data);
+        let msg = crate::devmgr::SendToDevice::T2Clip {
+            cmd: cmd.to_string(),
+            msg_type,
+            data,
+        };
+        self.dev.notify_send(msg.clone());
+        (self.dev.send_to_device)(msg);
     }
     fn on_data(&self, handler: Box<dyn Fn(&[u8]) + Send + Sync>) {
         self.handlers.lock().push(handler);
@@ -82,6 +88,19 @@ impl HaBridge {
             t2_adapters: Mutex::new(HashMap::new()),
             t1_adapters: Mutex::new(HashMap::new()),
         })
+    }
+
+    /// Wire HA MQTT setProperty / discovery onto this bridge (must share the same HaMqttSink
+    /// instance as the MQTT client).
+    pub fn attach_ha_mqtt_sink(self: &Arc<Self>, sink: &rethink_core::ha::HaMqttSink) {
+        let b = self.clone();
+        sink.on_set_property(move |id, prop, value| {
+            b.set_property(id, prop, value);
+        });
+        let b2 = self.clone();
+        sink.on_discovery(move || {
+            b2.republish_all();
+        });
     }
 
     pub fn has_device(&self, id: &str) -> bool {

@@ -297,6 +297,54 @@ impl HaMqttSink {
     }
 }
 
+#[cfg(test)]
+mod ha_mqtt_sink_tests {
+    use super::*;
+    use crate::config::HaConfig;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn test_cfg() -> HaConfig {
+        HaConfig {
+            mqtt_url: "mqtt://127.0.0.1:1883".into(),
+            discovery_prefix: "homeassistant".into(),
+            rethink_prefix: "rethink".into(),
+            mqtt_user: String::new(),
+            mqtt_pass: String::new(),
+        }
+    }
+
+    #[test]
+    fn set_property_handlers_fire_on_handle_message() {
+        let sink = HaMqttSink::new(test_cfg());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        sink.on_set_property(move |id, prop, val| {
+            assert_eq!(id, "dev1");
+            assert_eq!(prop, "climate-mode");
+            assert_eq!(val, "heat");
+            h.fetch_add(1, Ordering::SeqCst);
+        });
+        sink.handle_message("rethink/dev1/climate-mode/set", b"heat", false);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn publish_fn_receives_publish_property() {
+        let sink = HaMqttSink::new(test_cfg());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let h = hits.clone();
+        sink.set_publish_fn(move |topic, payload, retain| {
+            assert!(topic.contains("rethink/dev1/power"));
+            assert_eq!(payload, b"ON");
+            assert!(retain);
+            h.fetch_add(1, Ordering::SeqCst);
+        });
+        use crate::ha::HaConnection;
+        sink.publish_property("dev1", "power", "ON".into());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+}
+
 impl HaConnection for HaMqttSink {
     fn publish_config(&self, id: &str, config: &DeviceDiscovery) {
         let discovery_topic = format!(

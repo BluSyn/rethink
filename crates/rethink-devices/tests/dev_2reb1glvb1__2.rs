@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata, PropertyValue};
+use rethink_core::{Thinq2Device, hex_decode, hex_encode, MockHaConnection, MockThinq2Device, Metadata, PropertyValue};
 use rethink_devices::device_trait::DeviceHandler;
 use rethink_devices::devices::dev_2reb1glvb1__2::Device;
 

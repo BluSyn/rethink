@@ -27,7 +27,14 @@ pub struct ConnectedDevice {
 
 #[derive(Debug, Clone)]
 pub enum SendToDevice {
+    /// Raw AABB/TLV packet (published as CLIP cmd=packet).
     T2Packet(Vec<u8>),
+    /// Arbitrary CLIP command (setMaskingInfo, etc.).
+    T2Clip {
+        cmd: String,
+        msg_type: i32,
+        data: serde_json::Value,
+    },
     T1Json(serde_json::Value),
 }
 

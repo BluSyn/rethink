@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, MockHaConnection, MockThinq2Device, Metadata};
+use rethink_core::{Thinq2Device, hex_decode, MockHaConnection, MockThinq2Device, Metadata};
 use rethink_devices::devices::t1789efh_f::Device;
 
 const DEVICE_ID: &str = "test-id";
@@ -17,7 +17,8 @@ fn prop(ha: &MockHaConnection, n: &str) -> Option<String> {
 #[test]
 fn config_components() {
     let (ha, _, _) = make();
-    let comps = &ha.device(DEVICE_ID).unwrap().config.as_ref().unwrap().components;
+    let devinfo = ha.device(DEVICE_ID).unwrap();
+    let comps = &devinfo.config.as_ref().unwrap().components;
     assert!(comps.contains_key("power"));
     assert!(comps.contains_key("status"));
     assert!(comps.contains_key("remaining_time"));

@@ -169,6 +169,10 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                                         "tx": hex::encode(b),
                                         "injected": false,
                                     }),
+                                    SendToDevice::T2Clip { cmd, msg_type, data } => json!({
+                                        "tx": { "cmd": cmd, "type": msg_type, "data": data },
+                                        "injected": false,
+                                    }),
                                     SendToDevice::T1Json(v) => json!({
                                         "tx": v.to_string(),
                                         "injected": false,
@@ -281,19 +285,30 @@ struct EnableBody {
 async fn bridge_enable(
     State(state): State<MgmtState>,
     Path(device_id): Path<String>,
-    body: Option<Json<EnableBody>>,
+    body: Result<Json<EnableBody>, axum::extract::rejection::JsonRejection>,
 ) -> StatusCode {
-    let Some(bridge) = &state.bridge else {
+    let Some(bridge) = state.bridge.clone() else {
         return StatusCode::NOT_FOUND;
     };
-    let dt = body.and_then(|b| b.0.device_type);
-    let report = |s: &str| {
-        broadcast(&state, &json!({ "status": s }));
+    let dt = body.ok().and_then(|b| b.0.device_type);
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+    let mgr = state.manager.clone();
+    let device = match mgr.get(&device_id) {
+        Some(d) => Arc::new(crate::bridge_adapter::ConnectedAsLocal(d))
+            as Arc<dyn rethink_bridge::LocalDevice>,
+        None => {
+            broadcast(&state, &json!({ "status": "device not connected" }));
+            return StatusCode::BAD_REQUEST;
+        }
     };
-    match bridge
-        .enable(&device_id, dt.as_deref(), Some(&report))
-        .await
-    {
+    let report: Box<dyn FnMut(&str) + Send> = Box::new(move |s: &str| {
+        let _ = status_tx.send(s.to_string());
+    });
+    let result = bridge.enable(device, dt.as_deref(), Some(report)).await;
+    while let Ok(s) = status_rx.try_recv() {
+        broadcast(&state, &json!({ "status": s }));
+    }
+    match result {
         Ok(true) => {
             broadcast(&state, &json!({ "devices": enum_devices(&state) }));
             StatusCode::NO_CONTENT

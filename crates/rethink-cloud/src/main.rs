@@ -1,9 +1,11 @@
 //! rethink-cloud: emulates LG ThinQ cloud and bridges to Home Assistant MQTT.
 
+mod bridge_adapter;
 mod certs;
 mod devmgr;
 mod ha_bridge;
 mod ha_client;
+mod management;
 mod mqtt_broker;
 mod thinq1;
 mod thinq2;
@@ -11,6 +13,7 @@ mod thinq2;
 use anyhow::{Context, Result};
 use axum::routing::get;
 use axum::{Json, Router};
+use rethink_bridge::{Bridge, JsonStorage};
 use rethink_core::config::load_config;
 use rethink_core::ha::HaMqttSink;
 use rethink_core::logging;
@@ -84,31 +87,32 @@ async fn main() -> Result<()> {
     eprintln!("[status] CA certificate ready");
 
     let manager = devmgr::DeviceManager::new();
-    let ha_sink: Arc<dyn rethink_core::ha::HaConnection> =
-        HaMqttSink::new(config.homeassistant.clone());
-    let bridge = ha_bridge::HaBridge::new(ha_sink.clone());
+
+    // Single shared HA MQTT sink — used by HaBridge publishes AND the rumqttc client.
+    let ha_sink = HaMqttSink::new(config.homeassistant.clone());
+    let ha_bridge = ha_bridge::HaBridge::new(ha_sink.clone());
+    ha_bridge.attach_ha_mqtt_sink(&ha_sink);
+
+    // Optional LG cloud bridge
+    let lg_bridge: Option<Arc<Bridge>> = config.bridge.as_ref().map(|b| {
+        let storage = Arc::new(JsonStorage::new(&b.storage_path));
+        Bridge::new(storage)
+    });
 
     {
-        let bridge = bridge.clone();
+        let ha_bridge = ha_bridge.clone();
+        let lg_bridge = lg_bridge.clone();
         manager.on_new_device(move |dev| {
-            bridge.new_device(dev);
+            ha_bridge.new_device(dev.clone());
+            if let Some(ref br) = lg_bridge {
+                br.on_local_device(Arc::new(bridge_adapter::ConnectedAsLocal(dev)));
+            }
         });
     }
 
-    // HA MQTT client
+    // HA MQTT client — same sink instance so publish_fn is set where HaBridge publishes
     if config.mqtt {
-        if let Ok(sink) = Arc::downcast::<HaMqttSink>(
-            // HaMqttSink is behind trait object — start via typed clone
-            // fallback: spawn helper that takes config URL
-            {
-                // Use ha_client::start_ha_client with a fresh sink if we kept Arc
-                // We already have ha_sink as trait object; re-create typed for client
-                HaMqttSink::new(config.homeassistant.clone())
-            },
-        ) {
-            let _ = sink;
-        }
-        let sink = HaMqttSink::new(config.homeassistant.clone());
+        let sink = ha_sink.clone();
         tokio::spawn(async move {
             if let Err(e) = ha_client::start_ha_client(sink).await {
                 eprintln!("[status] HA MQTT client ended: {e}");
@@ -118,7 +122,7 @@ async fn main() -> Result<()> {
 
     let broker = Arc::new(mqtt_broker::Broker::new());
     let t2_acceptor = thinq2::device::DeviceAcceptor::new(broker.clone(), manager.clone());
-    let _ = t2_acceptor; // wired via broker publish hooks in DeviceAcceptor::new
+    let _ = t2_acceptor;
 
     // Plain MQTT for local testing
     if config.mqtt {
@@ -233,7 +237,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    // ThinQ1 HTTP (plain, typically)
+    // ThinQ1 HTTP
     {
         let port = config.thinq1_https_port.bind;
         let cfg = Arc::new(config.clone());
@@ -283,26 +287,36 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Management UI
+    // Management UI (full routes: /ws, /device, thinq_login*, bridge, static html)
     let mgmt_port = config
         .management_port
         .as_ref()
         .map(|p| p.bind)
         .unwrap_or(44401);
-    let mgr_for_api = manager.clone();
-    let app = Router::new()
-        .route("/", get(|| async { management_index() }))
-        .route(
-            "/api/devices",
-            get(move || {
-                let m = mgr_for_api.clone();
-                async move { Json(m.list_json()) }
-            }),
-        )
+
+    let mgmt_state = management::MgmtState {
+        ha: ha_sink.clone(),
+        ha_bridge: ha_bridge.clone(),
+        manager: manager.clone(),
+        bridge: lg_bridge.clone(),
+        subscribers: Arc::new(parking_lot::Mutex::new(Vec::new())),
+    };
+
+    let app = management::router(mgmt_state)
         .route(
             "/api/health",
             get(|| async {
                 Json(serde_json::json!({"ok": true, "service": "rethink-cloud"}))
+            }),
+        )
+        .route(
+            "/api/devices",
+            get({
+                let m = manager.clone();
+                move || {
+                    let m = m.clone();
+                    async move { Json(m.list_json()) }
+                }
             }),
         );
 
@@ -321,8 +335,4 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn management_index() -> axum::response::Html<&'static str> {
-    axum::response::Html(include_str!("../../../html/index.html"))
 }

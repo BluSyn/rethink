@@ -1,4 +1,4 @@
-use rethink_core::{hex_decode, MockHaConnection, MockThinq2Device, Metadata};
+use rethink_core::{Thinq2Device, hex_decode, MockHaConnection, MockThinq2Device, Metadata};
 use rethink_devices::device_trait::DeviceHandler;
 use rethink_devices::devices::dev_2ref11ebivpc4::Device;
 
@@ -26,7 +26,8 @@ fn prop(ha: &MockHaConnection, name: &str) -> Option<String> {
 #[test]
 fn config_immediate_celsius() {
     let (ha, _, _) = make();
-    let comps = &ha.device(DEVICE_ID).unwrap().config.as_ref().unwrap().components;
+    let devinfo = ha.device(DEVICE_ID).unwrap();
+    let comps = &devinfo.config.as_ref().unwrap().components;
     assert_eq!(comps["fridge_setpoint"]["unit_of_measurement"], "°C");
     assert_eq!(comps["fridge_setpoint"]["min"], 1);
     assert_eq!(comps["freezer_setpoint"]["min"], -23);
