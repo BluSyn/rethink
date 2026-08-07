@@ -19,6 +19,9 @@ impl LocalDevice for ConnectedAsLocal {
     fn model_id(&self) -> &str {
         &self.0.meta.model_id
     }
+    fn model_name(&self) -> &str {
+        &self.0.meta.model_name
+    }
     fn device_type(&self) -> Option<&str> {
         self.0.meta.device_type.as_deref()
     }

@@ -242,7 +242,7 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("missing thinq2Uri"))?;
         let otp = self
             .api_fetch(
-                &format!("{thinq2}/service/users/client/certificate"),
+                &format!("{thinq2}/service/devices/otp/certificate"),
                 "POST",
                 Some(json!({})),
             )
@@ -264,8 +264,10 @@ impl Client {
         &self,
         device_id: &str,
         alias: &str,
+        model_name: &str,
         device_type: &str,
-        ciphertext: Option<&str>,
+        platform_type: &str,
+        ciphertext_b64: Option<&str>,
     ) -> anyhow::Result<Value> {
         let g = self
             .gateway
@@ -281,18 +283,37 @@ impl Client {
             .ok_or_else(|| anyhow::anyhow!("home not set"))?;
         let mut body = json!({
             "deviceId": device_id,
+            "countryCode": self.env.country_code,
             "deviceType": device_type,
-            "alias": alias,
+            "modelName": model_name,
+            "aliasPrefix": alias,
+            "platformType": platform_type,
+            "initDevice": false,
         });
-        if let Some(ct) = ciphertext {
-            body["deviceCode"] = json!(ct);
+        if let Some(ct) = ciphertext_b64 {
+            body["ciphertext"] = json!(ct);
         }
-        self.api_fetch(
-            &format!("{thinq2}/service/homes/{home}/devices"),
-            "POST",
-            Some(body),
-        )
-        .await
+        match self
+            .api_fetch(
+                &format!("{thinq2}/service/homes/{home}/devices"),
+                "POST",
+                Some(body.clone()),
+            )
+            .await
+        {
+            Ok(v) => Ok(v),
+            Err(e) if e.to_string().contains("0125") => {
+                // already registered — retry with initDevice
+                body["initDevice"] = json!(true);
+                self.api_fetch(
+                    &format!("{thinq2}/service/homes/{home}/devices"),
+                    "POST",
+                    Some(body),
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn thinq1_state(&self) -> anyhow::Result<Value> {

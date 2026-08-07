@@ -50,3 +50,38 @@ fn t2_adapter_send_not_no_op() {
     );
     assert!(src.contains("T2Clip"), "T2Adapter::send must use T2Clip");
 }
+
+#[test]
+fn bridge_crate_has_real_upstream_connections() {
+    let lib = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rethink-bridge/src/lib.rs"
+    ));
+    let t2 = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rethink-bridge/src/thinq2_conn.rs"
+    ));
+    let t1 = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rethink-bridge/src/thinq1_conn.rs"
+    ));
+    let pair = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rethink-bridge/src/pair.rs"
+    ));
+    assert!(t2.contains("connect_thinq2") || t2.contains("fn connect"));
+    assert!(t2.contains("send_from_local"));
+    assert!(t2.contains("device_packet") || t2.contains("format_device_packet"));
+    assert!(t1.contains("connect_thinq1") || t1.contains("fn connect"));
+    assert!(t1.contains("send_from_local"));
+    assert!(pair.contains("pair_thinq2"));
+    assert!(pair.contains("mqtt_server") || pair.contains("mqttServer"));
+    // start_session must open upstream and wire on_data
+    assert!(lib.contains("connect_thinq2") || lib.contains("connect_thinq2"));
+    assert!(lib.contains("send_from_local"));
+    assert!(lib.contains("on_data"));
+    assert!(
+        !lib.contains("let _ = buf"),
+        "local→LG on_data must not ignore buffer"
+    );
+}
