@@ -7,65 +7,94 @@ import AABBDevice from './aabb_device'
 import log from '@/util/logging'
 
 /**
- * LG heat-pump dryer SoftAP model RH10V9_CH (deviceType 202).
+ * LG heat-pump dryer — SoftAP model RH10V9_CH (deviceType 202, e.g. RH10V9 family).
  *
- * Reverse-engineering stub: the module stays MQTT-connected but may not push
- * UART status until a "start monitoring" command is sent (same pattern as many
- * washers: F0ED…). Without a handler, that poll never runs, so captures stay empty.
+ * AABB frames (inner body after AA/len, before checksum/BB):
+ *   0x30 0xEB + 27-byte record   — single status (poll reply / reconnect)
+ *   0x30 0xEC + 27B prev + 27B curr — dual status (unsolicited updates)
  *
- * This driver:
- *  - sends laundry-style monitor-enable on start (and periodically retries)
- *  - logs every inbound frame
- *  - publishes the last raw AABB body as a diagnostic sensor for RE
+ * Same dryer family byte 0x30 as US RV13* units, but records are 27B (not 28/29)
+ * and omit the 0x1b marker used on some NA models.
  *
- * Once we have real status frames, map fields like RV13* dryers and drop the probe.
+ * Record layout (live idle capture + poll):
+ *   rec[0]  remaining hours
+ *   rec[1]  remaining minutes
+ *   rec[2]  phase/status (same codes as other LG dryers: 0=off, 1=initial, 0x32=drying, …)
+ *   rec[17] options / flags (seen 0x00 → 0x08 across polls; meaning TBD)
+ *   rec[25] constant 0x75 in captures — unknown
+ *
+ * Monitor enable F0ED1121… is required; without it the module only MQTT-pings.
  */
+
+const RECORD_LEN = 27
+
+const STATUS: Record<number, string> = {
+    0x00: 'Off',
+    0x01: 'Initial',
+    0x03: 'Pause',
+    0x32: 'Drying',
+    0x33: 'Cooling',
+    0x04: 'End',
+}
+
 export default class Device extends AABBDevice {
     private monitorTimer: ReturnType<typeof setInterval> | undefined
 
     constructor(HA: Connection, thinq: Thinq2Device, meta: Metadata) {
         super(HA, thinq)
-
-        const lastPacket = {
-            platform: 'sensor',
-            unique_id: '$deviceid-last_packet',
-            state_topic: '$this/last_packet',
-            name: 'Last packet (hex)',
-            icon: 'mdi:hexadecimal',
-            entity_category: 'diagnostic',
-        }
-
         this.setConfig(
             allowExtendedType({
-                ...HADevice.config(meta, { name: 'LG Dryer (probe)' }),
+                ...HADevice.config(meta, { name: 'LG Dryer' }),
                 components: {
-                    last_packet: lastPacket,
-                    packet_count: {
+                    power: {
+                        platform: 'binary_sensor',
+                        unique_id: '$deviceid-power',
+                        state_topic: '$this/power',
+                        name: 'Power',
+                        icon: 'mdi:tumble-dryer',
+                        device_class: 'running',
+                    },
+                    status: {
                         platform: 'sensor',
-                        unique_id: '$deviceid-packet_count',
-                        state_topic: '$this/packet_count',
-                        name: 'Packet count',
-                        icon: 'mdi:counter',
+                        unique_id: '$deviceid-status',
+                        state_topic: '$this/status',
+                        name: 'Status',
+                        icon: 'mdi:state-machine',
+                    },
+                    remaining_time: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-remaining_time',
+                        state_topic: '$this/remaining_time',
+                        name: 'Remaining time',
+                        icon: 'mdi:timer-outline',
+                        device_class: 'duration',
+                        unit_of_measurement: 'min',
+                    },
+                    // Diagnostic raw fields until course/temp/dry-level are mapped from more captures
+                    flags: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-flags',
+                        state_topic: '$this/flags',
+                        name: 'Flags (raw)',
+                        icon: 'mdi:flag',
                         entity_category: 'diagnostic',
-                        state_class: 'total_increasing',
                     },
                 },
             }),
         )
     }
 
-    private packetCount = 0
-
     start() {
         this.sendMonitorEnable()
-        // Retry a few times — some modules only answer after MCU wakes.
-        this.monitorTimer = setInterval(() => this.sendMonitorEnable(), 15_000)
-        setTimeout(() => {
-            if (this.monitorTimer) {
+        // A few retries while the dryer MCU wakes; then stop spamming.
+        let n = 0
+        this.monitorTimer = setInterval(() => {
+            this.sendMonitorEnable()
+            if (++n >= 8 && this.monitorTimer) {
                 clearInterval(this.monitorTimer)
                 this.monitorTimer = undefined
             }
-        }, 2 * 60_000)
+        }, 15_000)
     }
 
     drop() {
@@ -76,38 +105,40 @@ export default class Device extends AABBDevice {
         super.drop()
     }
 
-    /** Common ThinQ2 laundry "enable unsolicited status" inner body (AABB). */
     private sendMonitorEnable() {
-        // Washer / WashTower style — works on many 20/30xx laundry platforms.
-        const cmds = [
-            'F0ED1121010000001800',
-            // Fridge-family variant seen on some modules (harmless if ignored)
-            'F0ED1211010000010400',
-        ]
-        for (const hex of cmds) {
-            log('status', this.id, 'RH10V9 probe: sending monitor enable', hex)
-            this.send(Buffer.from(hex, 'hex'))
-        }
+        // Laundry-style unsolicited-status enable (required on this model).
+        log('status', this.id, 'RH10V9: monitor enable')
+        this.send(Buffer.from('F0ED1121010000001800', 'hex'))
     }
 
-    processData(buf: Buffer) {
-        log('status', this.id, 'RH10V9 probe RX', buf.toString('hex'))
-        this.packetCount++
-        this.publishProperty('packet_count', this.packetCount)
-        this.publishProperty('last_packet', buf.toString('hex'))
-        super.processData(buf)
+    private processRecord(rec: Buffer) {
+        if (rec.length < RECORD_LEN) return
+
+        const phase = rec[2]
+        const remaining = rec[0] * 60 + rec[1]
+        const flags = rec[17]
+
+        this.publishProperty('status', STATUS[phase] ?? `0x${phase.toString(16)}`)
+        this.publishProperty('remaining_time', remaining)
+        this.publishProperty('power', phase !== 0 ? 'ON' : 'OFF')
+        this.publishProperty('flags', flags)
     }
 
     processAABB(buf: Buffer) {
-        // Dump structure hints for RE without claiming field meanings yet.
-        log(
-            'status',
-            this.id,
-            `RH10V9 AABB len=${buf.length} type=0x${buf[0]?.toString(16)} sub=0x${buf[1]?.toString(16)}`,
-        )
+        if (buf[0] !== 0x30) return
+
+        if (buf[1] === 0xeb && buf.length === 2 + RECORD_LEN) {
+            // Single 27-byte status record
+            this.processRecord(buf.subarray(2, 2 + RECORD_LEN))
+        } else if (buf[1] === 0xec && buf.length === 2 + 2 * RECORD_LEN) {
+            // Dual records: previous then current (use current = second half)
+            this.processRecord(buf.subarray(2 + RECORD_LEN, 2 + 2 * RECORD_LEN))
+        } else {
+            log('status', this.id, 'RH10V9 unhandled AABB', buf.toString('hex'))
+        }
     }
 
     setProperty(_prop: string, _mqttValue: string) {
-        // probe only
+        // Read-only for now
     }
 }
