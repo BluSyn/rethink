@@ -82,6 +82,16 @@ describe(MODEL_ID, () => {
         dev.drop()
     })
 
+    test('0x31 identity frame is ignored', () => {
+        const { ha, thinq, dev } = makeDevice()
+        const idFrame = buf(
+            'AA373031020153414133383439303532370146129B000040000000000002534141333939333439353600000AC20000400000000000D2BB',
+        )
+        thinq.emit('data', idFrame)
+        assert.equal(ha.getProperty(DEVICE_ID, 'status', 'state'), undefined)
+        dev.drop()
+    })
+
     test('monitor retries then stops', (t) => {
         enableMockTimers(t)
         const { thinq, dev } = makeDevice()

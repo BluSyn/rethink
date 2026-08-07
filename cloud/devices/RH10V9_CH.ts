@@ -16,14 +16,19 @@ import log from '@/util/logging'
  * Same dryer family byte 0x30 as US RV13* units, but records are 27B (not 28/29)
  * and omit the 0x1b marker used on some NA models.
  *
- * Record layout (live idle capture + poll):
+ * Record layout (from live polls):
  *   rec[0]  remaining hours
  *   rec[1]  remaining minutes
- *   rec[2]  phase/status (same codes as other LG dryers: 0=off, 1=initial, 0x32=drying, …)
- *   rec[17] options / flags (seen 0x00 → 0x08 across polls; meaning TBD)
- *   rec[25] constant 0x75 in captures — unknown
+ *   rec[2]  phase/status (0=off, 1=initial, … — drying codes not yet seen live)
+ *   rec[17] options bitfield (seen 0x00 / 0x08)
+ *   rec[21] unknown (seen 0x00 idle-awake, 0x03 while module reported off)
+ *   rec[25] constant 0x75 in all captures so far
+ *
+ * 0x30 0x31 — identity/serial frame (SAA…), ignored for state.
  *
  * Monitor enable F0ED1121… is required; without it the module only MQTT-pings.
+ * Note: polls often return a frozen MCU snapshot. If the panel is used only
+ * locally without remote/smart features, running-state bytes may never update.
  */
 
 const RECORD_LEN = 27
@@ -70,13 +75,21 @@ export default class Device extends AABBDevice {
                         device_class: 'duration',
                         unit_of_measurement: 'min',
                     },
-                    // Diagnostic raw fields until course/temp/dry-level are mapped from more captures
+                    // Diagnostic raw fields until course/temp/dry-level are mapped
                     flags: {
                         platform: 'sensor',
                         unique_id: '$deviceid-flags',
                         state_topic: '$this/flags',
                         name: 'Flags (raw)',
                         icon: 'mdi:flag',
+                        entity_category: 'diagnostic',
+                    },
+                    raw_b21: {
+                        platform: 'sensor',
+                        unique_id: '$deviceid-raw_b21',
+                        state_topic: '$this/raw_b21',
+                        name: 'Raw byte 21',
+                        icon: 'mdi:numeric',
                         entity_category: 'diagnostic',
                     },
                 },
@@ -117,15 +130,20 @@ export default class Device extends AABBDevice {
         const phase = rec[2]
         const remaining = rec[0] * 60 + rec[1]
         const flags = rec[17]
+        const b21 = rec[21]
 
         this.publishProperty('status', STATUS[phase] ?? `0x${phase.toString(16)}`)
         this.publishProperty('remaining_time', remaining)
         this.publishProperty('power', phase !== 0 ? 'ON' : 'OFF')
         this.publishProperty('flags', flags)
+        this.publishProperty('raw_b21', b21)
     }
 
     processAABB(buf: Buffer) {
         if (buf[0] !== 0x30) return
+
+        // Device identity / serial (SAA…) — no cycle state
+        if (buf[1] === 0x31) return
 
         if (buf[1] === 0xeb && buf.length === 2 + RECORD_LEN) {
             // Single 27-byte status record
