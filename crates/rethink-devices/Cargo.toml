@@ -1,0 +1,18 @@
+[package]
+name = "rethink-devices"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "HA device handlers and modelId registry for rethink"
+
+[dependencies]
+rethink-util = { workspace = true }
+rethink-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+hex = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+base64 = { workspace = true }

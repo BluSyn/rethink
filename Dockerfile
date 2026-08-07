@@ -1,29 +1,34 @@
-# Build stage
-FROM alpine:3.20 AS build
+# Multi-stage Rust build for rethink-cloud
+FROM rust:1.85-bookworm AS build
 WORKDIR /app
 
-RUN apk add --no-cache nodejs npm
+# Cache dependency builds
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+# HTML assets are embedded at compile time via include_dir
+COPY html ./html
 
-COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts
+RUN cargo build --release -p rethink-cloud -p rethink-setup -p rethink-tools \
+    && strip target/release/rethink-cloud target/release/rethink-setup \
+       target/release/packet-parser target/release/packet-sender
 
-COPY . .
-RUN npm run build && npm prune --omit=dev
-
-# Production stage
-FROM alpine:3.20 AS runtime
+FROM debian:bookworm-slim AS runtime
 WORKDIR /app
 
-RUN apk add --no-cache nodejs openssl \
-	&& addgroup -S app \
-	&& adduser -S -G app app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates openssl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r app \
+    && useradd -r -g app app
 
-COPY --from=build /app/package.json /app/package-lock.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
+COPY --from=build /app/target/release/rethink-cloud /usr/local/bin/rethink-cloud
+COPY --from=build /app/target/release/rethink-setup /usr/local/bin/rethink-setup
+COPY --from=build /app/target/release/packet-parser /usr/local/bin/packet-parser
+COPY --from=build /app/target/release/packet-sender /usr/local/bin/packet-sender
 COPY config.jsonc /app/config.json
 
-RUN mkdir -p /app/data
+RUN mkdir -p /app/data && chown -R app:app /app
+USER app
 
 EXPOSE 443 8883 1884 46030 47878 44401
-CMD ["sh", "-c", "[ -f /app/data/config.json ] || cp /app/config.json /app/data/config.json; exec node dist/rethink-cloud.js /app/data/config.json"]
+CMD ["sh", "-c", "[ -f /app/data/config.json ] || cp /app/config.json /app/data/config.json; exec rethink-cloud /app/data/config.json"]

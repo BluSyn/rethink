@@ -8,3 +8,8 @@ node_modules
 dist
 oauth.json
 state
+
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak

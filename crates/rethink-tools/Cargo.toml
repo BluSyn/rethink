@@ -1,0 +1,25 @@
+[package]
+name = "rethink-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI utilities: packet-parser, packet-sender, etc."
+
+[[bin]]
+name = "packet-parser"
+path = "src/bin/packet_parser.rs"
+
+[[bin]]
+name = "packet-sender"
+path = "src/bin/packet_sender.rs"
+
+[dependencies]
+rethink-util = { workspace = true }
+rethink-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+hex = { workspace = true }
+rumqttc = { workspace = true }
