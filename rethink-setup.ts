@@ -15,7 +15,10 @@ if (process.argv.length != 5) {
 	  SETUP_SECURITY=WPA2_PSK|WPA_PSK   (default WPA2_PSK)
 	  SETUP_FORMAT=B64|plain           (default B64)
 	  SETUP_CIPHER=AES                 (default AES)
-	  SETUP_RELEASE_DELAY_MS=2000      (delay before releaseDev)
+	  SETUP_RELEASE_DELAY_MS=3000      (delay before releaseDev)
+	  SETUP_FREQ=2417                  (force AP frequency MHz; else taken from scan)
+	  SETUP_AP_BSSID=aa:bb:cc:dd:ee:ff (home AP MAC if known — not the SoftAP IP)
+	  SETUP_SSID_AS_BSSID=1            (also send B64 SSID in legacy "bssid" field; default on)
 `,
     )
     process.exit()
@@ -91,12 +94,15 @@ QwIDAQAB
 -----END PUBLIC KEY-----
 `
     // Optional overrides for firmwares that accept setApInfo but fail STA join
-    // (seen on some RTK_RTL8711am modules). Examples:
-    //   SETUP_SECURITY=WPA_PSK SETUP_FORMAT=plain SETUP_RELEASE_DELAY_MS=3000
+    // (seen on some RTK_RTL8711am modules — fridges/washers). Examples:
+    //   SETUP_SECURITY=WPA_PSK SETUP_RELEASE_DELAY_MS=5000 SETUP_FREQ=2417
     const security = process.env.SETUP_SECURITY ?? 'WPA2_PSK'
     const cipher = process.env.SETUP_CIPHER ?? 'AES'
     const format = (process.env.SETUP_FORMAT ?? 'B64').toUpperCase() // B64 | PLAIN
-    const releaseDelayMs = Number(process.env.SETUP_RELEASE_DELAY_MS ?? '2000')
+    const releaseDelayMs = Number(process.env.SETUP_RELEASE_DELAY_MS ?? '3000')
+    const forceFreq = process.env.SETUP_FREQ
+    const apBssid = process.env.SETUP_AP_BSSID // real AP MAC, e.g. 7a:83:c2:…
+    const ssidAsBssid = (process.env.SETUP_SSID_AS_BSSID ?? '1') !== '0'
 
     // Always log lengths so shell mangling is obvious (do not log the password).
     console.log(
@@ -108,12 +114,44 @@ QwIDAQAB
         socket.write(JSON.stringify(obj) + '\n')
     }
 
+    function buildApInfoData(extra: Record<string, string | number> = {}) {
+        const useB64 = format === 'B64'
+        const ssid = useB64 ? Buffer.from(wifiname, 'utf-8').toString('base64') : wifiname
+        const password = useB64 ? Buffer.from(wifipass, 'utf-8').toString('base64') : wifipass
+        const data: Record<string, string | number> = {
+            format: useB64 ? 'B64' : 'plain',
+            ssid,
+            password,
+            security,
+            cipher,
+            // Same region fields as ThinQ1 apinfo — some modules store these with the STA profile.
+            subCountryCode: 'DE',
+            regionalCode: 'eic',
+            constantConnect: 'Y',
+            // Multi-profile firmwares (supportsMultiProfile=Y) sometimes need an explicit default slot.
+            multiProfile: 'Y',
+            ...extra,
+        }
+        // ThinQ1 SoftAP used the field name "bssid" for the (B64) SSID. Some RTK firmwares
+        // still read that key. Optional SETUP_AP_BSSID overrides with the real AP MAC.
+        if (apBssid) {
+            data.bssid = apBssid
+        } else if (ssidAsBssid) {
+            data.bssid = ssid
+        }
+        if (forceFreq) data.frequency = Number(forceFreq) || forceFreq
+        return data
+    }
+
     return new Promise<void>((resolve, reject) => {
         console.log(`Connecting to ${host}:5500`)
         const socket = tls.connect({ host: host, port: 5500, rejectUnauthorized: false }, function () {
             console.log('TLS connection established')
             send(socket, { type: 'request', cmd: 'setDeviceInit', data: { set: 'true', constantConnect: 'Y' } })
         })
+
+        /** After the first setApInfo, modules often return a scan hit (freq/security). Re-send once with those. */
+        let apInfoPass = 0
 
         function onMessage(json: any) {
             console.log(json)
@@ -136,7 +174,11 @@ QwIDAQAB
                             constantConnect: 'Y',
                         },
                     })
-                if (json.cmd === 'getDeviceInfo')
+                if (json.cmd === 'getDeviceInfo') {
+                    const info = json.data || {}
+                    console.log(
+                        `Device: model=${info.modelName} type=${info.deviceType} protocol=${info.protocolVer} modem=${info.demandType || info.modemType} multiProfile=${info.supportsMultiProfile} wpa3=${info.supportsWpa3}`,
+                    )
                     send(socket, {
                         type: 'request',
                         cmd: 'setCertInfo',
@@ -150,42 +192,48 @@ QwIDAQAB
                             constantConnect: 'Y',
                         },
                     })
+                }
                 if (json.cmd === 'setCertInfo') {
-                    const useB64 = format === 'B64'
-                    const ssid = useB64 ? Buffer.from(wifiname, 'utf-8').toString('base64') : wifiname
-                    const password = useB64 ? Buffer.from(wifipass, 'utf-8').toString('base64') : wifipass
-
-                    send(socket, {
-                        type: 'request',
-                        cmd: 'setApInfo',
-                        data: {
-                            format: useB64 ? 'B64' : 'plain',
-                            ssid,
-                            password,
-                            security,
-                            cipher,
-                            // Same region fields as ThinQ1 apinfo — some modules store these with the STA profile.
-                            subCountryCode: 'DE',
-                            regionalCode: 'eic',
-                            constantConnect: 'Y',
-                        },
-                    })
+                    apInfoPass = 1
+                    const data = buildApInfoData()
+                    console.log(
+                        `setApInfo pass ${apInfoPass}: keys=${Object.keys(data).filter((k) => k !== 'password').join(',')}`,
+                    )
+                    send(socket, { type: 'request', cmd: 'setApInfo', data })
                 }
                 if (json.cmd === 'setApInfo') {
+                    const hn = json.data?.homeNetwork
+                    if (apInfoPass === 1 && hn && !forceFreq) {
+                        // Second pass: pin frequency (and security/cipher) from the module's scan.
+                        // Several RTK firmwares accept pass-1 with result 000 but only associate
+                        // after a follow-up that includes the scanned BSS frequency.
+                        apInfoPass = 2
+                        const extra: Record<string, string | number> = {}
+                        if (hn.freq != null) extra.frequency = Number(hn.freq) || hn.freq
+                        if (hn.security) extra.security = hn.security
+                        if (hn.encryption) extra.cipher = hn.encryption
+                        console.log(
+                            `setApInfo pass 2 (scan refine): freq=${hn.freq} security=${hn.security} encryption=${hn.encryption} oui=${hn.oui}`,
+                        )
+                        send(socket, { type: 'request', cmd: 'setApInfo', data: buildApInfoData(extra) })
+                        return
+                    }
+
                     // Give the modem time to commit STA credentials before leaving SoftAP.
-                    // Immediate releaseDev has been reported to work on QCA modules but flake on some RTK ones.
-                    const delay = Number.isFinite(releaseDelayMs) ? Math.max(0, releaseDelayMs) : 2000
-                    console.log(`setApInfo ok; waiting ${delay}ms before releaseDev`)
+                    const delay = Number.isFinite(releaseDelayMs) ? Math.max(0, releaseDelayMs) : 3000
+                    console.log(`setApInfo ok (pass ${apInfoPass}); waiting ${delay}ms before releaseDev`)
                     setTimeout(() => {
                         send(socket, { type: 'request', cmd: 'releaseDev', data: { constantConnect: 'Y' } })
                     }, delay)
                 }
                 if (json.cmd === 'releaseDev') {
                     console.log('Setup completed, the device will now connect to your Wi-Fi')
-                    socket.destroy()
-
-                    console.log('ThinQ2 setup successful, see rethink-cloud logs for a follow-up')
-                    resolve()
+                    // Keep SoftAP TCP up briefly so the module can finish teardown cleanly.
+                    setTimeout(() => {
+                        socket.destroy()
+                        console.log('ThinQ2 setup successful, see rethink-cloud logs for a follow-up')
+                        resolve()
+                    }, 1500)
                 }
             }
         }
@@ -200,9 +248,19 @@ QwIDAQAB
 }
 
 ;(async () => {
-    // We try the ThinQ 1 protocol first. The formatting should be rejected by ThinQ2 appliances. Hopefully.
-        console.log('Trying ThinQ 2 setup')
-        thinq2Setup()
+    // ThinQ2 SoftAP is JSON/CLIP (washers, dryers, fridges, ACs). ThinQ1 mTosp is rare and can hang
+    // a ThinQ2 SoftAP if tried first — only enable with SETUP_TRY_THINQ1=1.
+    if (process.env.SETUP_TRY_THINQ1 === '1') {
+        try {
+            console.log('Trying ThinQ 1 setup')
+            await thinq1Setup()
+            return
+        } catch (err) {
+            console.log('ThinQ 1 setup failed', err)
+        }
+    }
+    console.log('Trying ThinQ 2 setup')
+    await thinq2Setup()
 })()
 
 process.on('exit', () =>
