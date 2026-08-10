@@ -1,6 +1,30 @@
 //! Structural checks that the shipped main path uses one HaMqttSink and management.
 
 #[test]
+fn management_exposes_re_and_detail_routes() {
+    let mgmt = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/management.rs"));
+    assert!(mgmt.contains("/api/decode"), "decode API route required");
+    assert!(mgmt.contains("/api/re/export"), "LLM export API route required");
+    assert!(mgmt.contains("/api/tlv/catalog"), "TLV catalog route required");
+    assert!(
+        mgmt.contains("/api/devices/{device_id}") || mgmt.contains("/api/devices/"),
+        "device detail route required"
+    );
+    assert!(mgmt.contains("llm_export_text") || mgmt.contains("re_export"), "LLM export helper");
+    assert!(mgmt.contains("classify_tlvs") || mgmt.contains("decode_hex_payload"));
+
+    let index = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/index.html"));
+    assert!(index.contains("decode_hex") || index.contains("TLV decode"));
+    assert!(index.contains("llm_export") || index.contains("Export for LLM"));
+    assert!(index.contains("device_detail") || index.contains("Device detail"));
+
+    let panel = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/panel.js"));
+    assert!(panel.contains("api/decode"));
+    assert!(panel.contains("api/re/export"));
+    assert!(panel.contains("api/devices/"));
+}
+
+#[test]
 fn main_uses_single_ha_sink_and_management_router() {
     let main_src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/main.rs"));
     let news: Vec<_> = main_src.match_indices("HaMqttSink::new").collect();

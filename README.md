@@ -34,15 +34,22 @@ The following appliances are currently supported in rethink:
     - 👍 DLEX3900B (RV13B6BSD_D_US_WIFI), Electric Dryer - mostly working
 - WashTowers (combined washer+dryer):
     - 👍 WKEX200HBA (WTL_FXU_BDV_NA_01), WashTower - mostly working
+- Dehumidifiers / humidifiers / hood:
+    - 👍 DHUM_056905_WW dehumidifier
+    - 👍 DHUM_231006_WW Korean dehumidifier (mode/fan tables)
+    - 👍 HUM_056905_WW PuriCare humidifying air purifier
+    - 👍 STUDIO_HOOD range hood (fan + light)
+- Fridges (additional):
+    - 👍 2REF12EII_P_2 / GML844-class slim fridge (Pure N Fresh)
 
 The supported appliances can be used "out of the box" with HomeAssistant or another compatible MQTT consumer.  
 Appliances not listed above can still be used with the bridge mode, but they will not be translated to MQTT. Contributions are welcome!
 
-Most of the findings from the reverse engineering process are available on the [project wiki](https://github.com/anszom/rethink/wiki) as well.
+Most of the findings from the reverse engineering process are available on the [project wiki](https://github.com/anszom/rethink/wiki) and in-repo under [`docs/research/`](docs/research/) (start with [`THINQ2_RESEARCH.md`](docs/research/THINQ2_RESEARCH.md): protocols, open PRs, TLV catalog notes).
 
 ## Build & run (Rust)
 
-Requirements: Rust 1.80+ (edition 2021), OpenSSL CLI (for CA / device CSR signing).
+Requirements: Rust **1.88+** (Docker image `rust:1.88-bookworm`; `time`/`icu` crates need ≥1.86–1.88), OpenSSL CLI (for CA / device CSR signing).
 
 ```bash
 # Build all runtime crates
@@ -93,11 +100,17 @@ No other crates need to change for a new model.
 
 ## Management
 
-A simple web interface is available on a user-defined port (default: 44401). The interface supports:
+A web interface is available on a user-defined port (default: **44401**). The modern panel supports:
 
-- listing the devices connected to rethink
-- monitoring their communications (with packet injection)
-- configuring the bridge mode
+- listing connected devices with HA mapping / bridge status
+- **per-device detail** (modelId, platform, device type, SW, bridge/HA flags)
+- packet **monitor** with injection (`monitor?id=…`)
+- **TLV decode** tools (`POST /api/decode`) with known-tag highlighting
+- **unknown-signal LLM export** (`POST /api/re/export`) — one-click copy of RE notes
+- TLV catalog (`GET /api/tlv/catalog`)
+- bridge mode login / per-device enable
+
+Health and device list also expose `GET /api/health` and `GET /api/devices`.
 
 ## Code (Rust entry points)
 

@@ -1,144 +1,379 @@
 <!doctype html>
-<html>
+<html lang="en">
     <head>
-        <style>
-            .offline .hide-when-offline {
-                display: none;
-            }
-
-            .status_field {
-                display: inline-block;
-                width: 1.5em;
-            }
-
-            .preloader-wrapper.verysmall {
-                width: 24px;
-                height: 24px;
-            }
-        </style>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Rethink management</title>
         <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
         <link
             rel="stylesheet"
             href="https://cdnjs.cloudflare.com/ajax/libs/materialize/1.0.0/css/materialize.min.css"
         />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+            :root {
+                --bg: #0f1419;
+                --card: #1a2332;
+                --border: #2a3a4e;
+                --text: #e7eef7;
+                --muted: #8b9bb0;
+                --accent: #3d9cf0;
+                --ok: #3dd68c;
+                --warn: #f0b429;
+                --err: #f07178;
+                --unknown: #ff8b3d;
+            }
+            body {
+                background: var(--bg);
+                color: var(--text);
+                min-height: 100vh;
+            }
+            body.offline .hide-when-offline {
+                display: none;
+            }
+            nav {
+                background: linear-gradient(90deg, #152238, #1e3a5f) !important;
+                box-shadow: none;
+                border-bottom: 1px solid var(--border);
+            }
+            .brand-logo {
+                font-size: 1.25rem !important;
+                display: flex !important;
+                align-items: center;
+                gap: 0.4rem;
+            }
+            .card-panel {
+                background: var(--card) !important;
+                border: 1px solid var(--border);
+                border-radius: 12px !important;
+                color: var(--text);
+            }
+            .status_field {
+                display: inline-block;
+                width: 1.5em;
+            }
+            .status-row {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 1rem;
+                margin-bottom: 0.5rem;
+            }
+            .status-pill {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.35rem;
+                padding: 0.35rem 0.75rem;
+                border-radius: 999px;
+                background: #121a26;
+                border: 1px solid var(--border);
+                font-size: 0.92rem;
+            }
+            table.highlight {
+                background: transparent;
+            }
+            table.highlight th {
+                color: var(--muted);
+                border-bottom: 1px solid var(--border);
+            }
+            table.highlight td {
+                border-radius: 0;
+                border-bottom: 1px solid var(--border);
+            }
+            table.highlight tbody tr:hover {
+                background: rgba(61, 156, 240, 0.08);
+            }
+            .chip-mapped {
+                background: rgba(61, 214, 140, 0.15);
+                color: var(--ok);
+            }
+            .chip-unmapped {
+                background: rgba(240, 180, 41, 0.15);
+                color: var(--warn);
+            }
+            .preloader-wrapper.verysmall {
+                width: 24px;
+                height: 24px;
+            }
+            .section-title {
+                color: var(--accent);
+                font-weight: 500;
+                margin-top: 1.5rem;
+            }
+            .detail-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+                gap: 0.75rem;
+            }
+            .detail-item label {
+                display: block;
+                color: var(--muted);
+                font-size: 0.75rem;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+            }
+            .detail-item span {
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                word-break: break-all;
+            }
+            textarea.re-input,
+            #llm_export {
+                background: #0c121a !important;
+                color: var(--text) !important;
+                border: 1px solid var(--border) !important;
+                border-radius: 8px;
+                min-height: 110px;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 0.85rem;
+                padding: 0.75rem;
+            }
+            #llm_export {
+                min-height: 200px;
+                white-space: pre-wrap;
+            }
+            .tlv-table td.unknown {
+                color: var(--unknown);
+                font-weight: 600;
+            }
+            .tlv-table td.known {
+                color: var(--ok);
+            }
+            .btn,
+            .btn-flat {
+                border-radius: 8px;
+                text-transform: none;
+            }
+            .btn.teal {
+                background: #1f8a70 !important;
+            }
+            .btn.blue {
+                background: var(--accent) !important;
+            }
+            .modal {
+                background: var(--card);
+                color: var(--text);
+                border-radius: 12px;
+            }
+            .modal .modal-footer {
+                background: var(--card);
+            }
+            input,
+            input:focus {
+                color: var(--text) !important;
+                border-bottom-color: var(--accent) !important;
+            }
+            label {
+                color: var(--muted) !important;
+            }
+            a {
+                color: var(--accent);
+            }
+            .helper {
+                color: var(--muted);
+                font-size: 0.9rem;
+            }
+            .layout-two {
+                display: grid;
+                grid-template-columns: 1.2fr 1fr;
+                gap: 1rem;
+            }
+            @media (max-width: 992px) {
+                .layout-two {
+                    grid-template-columns: 1fr;
+                }
+            }
+            .empty-state {
+                color: var(--muted);
+                padding: 1rem 0;
+            }
+        </style>
     </head>
 
     <body class="offline">
-        <nav class="light-blue lighten-1" role="navigation">
+        <nav role="navigation">
             <div class="nav-wrapper container">
                 <a id="logo-container" href="#" class="brand-logo">
                     <span class="material-icons">psychology_alt</span>
-                    Rethink management panel
+                    Rethink management
                 </a>
             </div>
         </nav>
-        <div class="container">
-            <h4 class="header orange-text">Connectivity</h4>
-            <span id="status_rethink" class="status_field"></span>Browser 🡘 Rethink<br />
-            <span id="status_mqtt" class="status_field"></span>Rethink 🡘 MQTT<br />
+
+        <div class="container" style="padding-bottom: 3rem">
+            <h5 class="section-title">Connectivity</h5>
+            <div class="card-panel">
+                <div class="status-row">
+                    <div class="status-pill">
+                        <span id="status_rethink" class="status_field"></span> Browser ↔ Rethink
+                    </div>
+                    <div class="status-pill">
+                        <span id="status_mqtt" class="status_field"></span> Rethink ↔ MQTT
+                    </div>
+                    <div class="status-pill">
+                        <span id="status_bridge" class="status_field"></span>
+                        Bridge: <span id="status_bridge_text">Unknown</span>
+                    </div>
+                </div>
+                <div class="hide-when-offline" style="margin-top: 0.75rem">
+                    <button
+                        id="btn_thinq_login"
+                        class="hide btn waves-effect waves-light modal-trigger blue"
+                        data-target="thinq_login"
+                    >
+                        Log into LG account <i class="material-icons right">login</i>
+                    </button>
+                    <button
+                        id="btn_thinq_logout"
+                        class="hide btn waves-effect waves-light modal-trigger tooltipped"
+                        data-target="thinq_logout"
+                        data-position="bottom"
+                        data-tooltip="Disables bridge mode for all devices."
+                    >
+                        Logout <i class="material-icons right">logout</i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="hide-when-offline layout-two">
+                <div>
+                    <h5 class="section-title">Connected devices</h5>
+                    <div class="card-panel" style="padding: 0.5rem 1rem 1rem">
+                        <table class="highlight">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Model</th>
+                                    <th>Platform</th>
+                                    <th>HA</th>
+                                    <th>Bridge</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="devices_body"></tbody>
+                        </table>
+                        <p id="devices_empty" class="empty-state hide">
+                            No appliances connected yet. Point SoftAP setup at rethink and power-cycle the device.
+                        </p>
+                        <p class="helper">
+                            Wiki:
+                            <a
+                                href="https://github.com/anszom/rethink/wiki/Installing-rethink%E2%80%90cloud#step-5-configure-your-device"
+                                target="_blank"
+                                rel="noopener"
+                                >connect a device</a
+                            >
+                            · Research:
+                            <code>docs/research/THINQ2_RESEARCH.md</code>
+                        </p>
+                    </div>
+
+                    <h5 class="section-title">Device detail</h5>
+                    <div class="card-panel" id="device_detail_panel">
+                        <p class="empty-state" id="detail_placeholder">
+                            Select a device to inspect model, platform, mapping, and open the packet monitor.
+                        </p>
+                        <div id="detail_content" class="hide">
+                            <div class="detail-grid" id="detail_grid"></div>
+                            <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap">
+                                <a id="detail_monitor_link" class="btn blue waves-effect" href="#">
+                                    <i class="material-icons left">troubleshoot</i> Open monitor
+                                </a>
+                                <button id="detail_refresh" class="btn-flat waves-effect white-text">
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h5 class="section-title">TLV decode &amp; reverse engineering</h5>
+                    <div class="card-panel">
+                        <p class="helper">
+                            Paste a hex capture (MQTT UART, raw TLV body, or AABB). Unknown tags are highlighted and
+                            can be copied as LLM-ready RE notes.
+                        </p>
+                        <label for="decode_hex">Packet hex</label>
+                        <textarea id="decode_hex" class="re-input materialize-textarea" rows="4" placeholder="000004000000a7… or AA…BB"></textarea>
+                        <div class="row" style="margin-bottom: 0">
+                            <div class="input-field col s6">
+                                <select id="decode_direction">
+                                    <option value="fromDevice" selected>fromDevice</option>
+                                    <option value="toDevice">toDevice</option>
+                                </select>
+                                <label>Direction hint</label>
+                            </div>
+                            <div class="input-field col s6">
+                                <input id="decode_model" type="text" placeholder="e.g. HUM_056905_WW" />
+                                <label for="decode_model" class="active">modelId (optional)</label>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0 1rem">
+                            <button id="btn_decode" class="btn teal waves-effect">
+                                <i class="material-icons left">code</i> Decode
+                            </button>
+                            <button id="btn_export_llm" class="btn blue waves-effect">
+                                <i class="material-icons left">smart_toy</i> Export for LLM
+                            </button>
+                            <button id="btn_copy_export" class="btn-flat waves-effect white-text">
+                                <i class="material-icons left">content_copy</i> Copy export
+                            </button>
+                        </div>
+                        <div id="decode_summary" class="helper"></div>
+                        <table class="highlight tlv-table" id="tlv_table">
+                            <thead>
+                                <tr>
+                                    <th>Tag</th>
+                                    <th>Name</th>
+                                    <th>Value</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tlv_body"></tbody>
+                        </table>
+                        <label for="llm_export" style="margin-top: 1rem; display: block">LLM export</label>
+                        <textarea id="llm_export" readonly placeholder="Unknown-signal export appears here…"></textarea>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="container hide-when-offline">
-            <h4 class="header orange-text">Connected devices</h4>
-            <table class="highlight">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Model</th>
-                        <th>Platform</th>
-                        <th>Bridge</th>
-                        <th>Monitor</th>
-                    </tr>
-                </thead>
-
-                <tbody id="devices_body"></tbody>
-            </table>
-
-            <br />
-            Follow the
-            <a
-                href="https://github.com/anszom/rethink/wiki/Installing-rethink%E2%80%90cloud#step-5-configure-your-device"
-                >wiki instructions</a
-            >
-            to connect new devices.
-        </div>
-
-        <div class="container hide-when-offline">
-            <h4 class="header orange-text">Bridge mode</h4>
-            <span id="status_bridge" class="status_field"></span>Status: <span id="status_bridge_text"></span
-            ><br /><br />
-            <button
-                id="btn_thinq_login"
-                class="hide btn waves-effect waves-light modal-trigger"
-                data-target="thinq_login"
-            >
-                Log into your LG account <i class="material-icons right">login</i>
-            </button>
-            <button
-                id="btn_thinq_logout"
-                class="hide btn waves-effect waves-light modal-trigger tooltipped"
-                data-target="thinq_logout"
-                data-position="bottom"
-                data-tooltip="This will disable bridge mode for all your devices."
-            >
-                logout<i class="material-icons right">logout</i>
-            </button>
-        </div>
-
+        <!-- modals (bridge login) -->
         <div id="thinq_login" class="modal">
             <div class="modal-content">
                 <h4>Log into your LG ThinQ account</h4>
                 <p>
-                    Make sure to enter a country code that matches your account. The LG login page will open in a
-                    window. Please proceed with the login, then copy the URL from the final blank page.
+                    Enter a country code that matches your account. The LG login page opens in a new window. After
+                    login, copy the URL from the final blank page.
                 </p>
                 <div class="row">
-                    <form class="col s12">
-                        <div class="row">
-                            <div class="input-field col s9">
-                                <input
-                                    id="country_code"
-                                    type="text"
-                                    class="validate"
-                                    minlength="2"
-                                    maxlength="2"
-                                    pattern="[A-Za-z]{2}"
-                                    required
-                                />
-                                <label for="country_code">Country code</label>
-                            </div>
-                            <div class="input-field col s3">
-                                <button
-                                    type="button"
-                                    class="btn waves-effect waves-light"
-                                    id="btn_thinq_login_continue"
-                                >
-                                    Log in <i class="material-icons right">login</i>
-                                </button>
-                            </div>
-                        </div>
-                    </form>
+                    <div class="input-field col s9">
+                        <input
+                            id="country_code"
+                            type="text"
+                            class="validate"
+                            minlength="2"
+                            maxlength="2"
+                            pattern="[A-Za-z]{2}"
+                            required
+                        />
+                        <label for="country_code">Country code</label>
+                    </div>
+                    <div class="input-field col s3">
+                        <button type="button" class="btn waves-effect waves-light" id="btn_thinq_login_continue">
+                            Log in <i class="material-icons right">login</i>
+                        </button>
+                    </div>
                 </div>
                 <p>Paste the final URL below.</p>
                 <div class="row">
-                    <form class="col s12">
-                        <div class="row">
-                            <div class="input-field col s9">
-                                <input id="login_url" type="text" class="validate" required />
-                                <label for="login_url">URL</label>
-                            </div>
-                            <div class="input-field col s3">
-                                <button
-                                    type="button"
-                                    class="btn waves-effect waves-light"
-                                    id="btn_thinq_login_complete"
-                                >
-                                    Continue
-                                </button>
-                            </div>
-                        </div>
-                    </form>
+                    <div class="input-field col s9">
+                        <input id="login_url" type="text" class="validate" required />
+                        <label for="login_url">URL</label>
+                    </div>
+                    <div class="input-field col s3">
+                        <button type="button" class="btn waves-effect waves-light" id="btn_thinq_login_complete">
+                            Continue
+                        </button>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -163,30 +398,18 @@
             <div class="modal-content">
                 <h4>Select device type</h4>
                 <p>
-                    Please select the appropriate type for this device. This value usually consists of three digits and
-                    can be obtained during the setup process. The device will only register with the ThinQ cloud if the
-                    device type is set correctly.
+                    Three-digit device type from setup. The device only registers with ThinQ cloud if this is correct.
                 </p>
                 <div class="row">
-                    <form class="col s12">
-                        <div class="row">
-                            <div class="input-field col s9">
-                                <input
-                                    type="text"
-                                    id="devtype-input"
-                                    class="autocomplete validate"
-                                    minlength="3"
-                                    required
-                                />
-                                <label for="devtype-input">Device type</label>
-                            </div>
-                            <div class="input-field col s3">
-                                <button type="button" class="btn waves-effect waves-light" id="btn_devicetype_continue">
-                                    Continue
-                                </button>
-                            </div>
-                        </div>
-                    </form>
+                    <div class="input-field col s9">
+                        <input type="text" id="devtype-input" class="autocomplete validate" minlength="3" required />
+                        <label for="devtype-input">Device type</label>
+                    </div>
+                    <div class="input-field col s3">
+                        <button type="button" class="btn waves-effect waves-light" id="btn_devicetype_continue">
+                            Continue
+                        </button>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">

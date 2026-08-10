@@ -66,14 +66,14 @@ Last updated: 2026-08-10. Sources are named with the capability or model they co
 | #123 | F_V7_Y___W.B__QEUK washer | Alias → F_V8_Y | **Registered** as F_V7_Y___W.B_2QEUK |
 | #122 | ac_common base | Shared AC TLV refactor | Research; RAC still monolithic |
 | #121 | Dashboard UI | Names, nicer panel | **This work: management UI** |
-| #120 | STUDIO_HOOD | AABB fan+light hood | **Ported in this work** |
+| #120 | STUDIO_HOOD | AABB fan+light hood | **Registered** (`studio_hood`) |
 | #118 | 1WPU4CIGCR__2 water purifier | AABB capability API | Documented; deferred (large) |
 | #117 | Korean WashTower FAKPK21021 / BDH_D39301_KR | Extended EB/EC | Documented; deferred (3k+ LOC) |
 | #116 | HWWA9K_F2 CordZero vacuum | AABB stick vacuum | Documented; deferred |
 | #115 | ST_B_E4H01Y_APL Styler | AABB garment care | Documented; deferred |
-| #114 | HUM_056905_WW humidifier | TLV modelJSON map | **Ported in this work** |
-| #113 | DHUM_056905_WW + **DHUM_231006_WW** | Dehumidifier + KR mode tables | 056905 present; **231006 ported** |
-| #96 | 2REF12EII_P_2 / GML844 fridge | AABB slim fridge | **Ported in this work** |
+| #114 | HUM_056905_WW humidifier | TLV modelJSON map | **Registered** (`hum_056905_ww`) |
+| #113 | DHUM_056905_WW + **DHUM_231006_WW** | Dehumidifier + KR mode tables | **Both registered** |
+| #96 | 2REF12EII_P_2 / GML844 fridge | AABB slim fridge | **Registered** (`dev_2ref12eii_p_2`) |
 | #92 / #81 | RTL8720cm SoftAP | Provisioning | Setup path |
 | #73 / #89 | WIN_056905_WW window AC | TLV climate | **Registered** |
 | #64 | DHUM_056905_WW | Dehumidifier | **Registered** |
