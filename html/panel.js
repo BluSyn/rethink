@@ -77,7 +77,7 @@ document.addEventListener('DOMContentLoaded', function () {
 })
 
 /** Bump when sequence-export / decode UI changes so you can confirm the binary embeds this file. */
-const PANEL_UI_REV = 'device-type-labels'
+const PANEL_UI_REV = 'delta-skip-query'
 
 document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('panel_ui_rev')
@@ -1130,9 +1130,21 @@ function frameUartKind(decoded) {
     return null
 }
 
+/** True for host query stubs (e.g. only 0x1f5) — not useful for state deltas. */
+function isQueryOnlyFrame(decoded) {
+    if (!decoded || decoded.kind !== 'hex' || !decoded.decode) return true
+    const els = decoded.decode.elements || []
+    if (!els.length) return true
+    if (els.every((e) => Number(e.t) === 0x1f5)) return true
+    const kind = frameUartKind(decoded)
+    // toDevice climate query/command with only a couple tags is usually poll noise
+    if (kind === 0x65 && els.length <= 2) return true
+    return false
+}
+
 /**
  * True when two TLV frames are worth a delta (same dialect / overlapping tags).
- * Avoids caps↔values noise when first/last are different message types.
+ * Avoids caps↔values noise and query_type-only TX noise.
  */
 function framesComparableForDelta(a, b) {
     if (!a || !b || a.kind !== 'hex' || b.kind !== 'hex') return false
@@ -1142,6 +1154,7 @@ function framesComparableForDelta(a, b) {
     if (da.protocol === 'UartBinary' || db.protocol === 'UartBinary') return false
     if (da.protocol !== 'Tlv' && da.protocol !== 'TlvRaw') return false
     if (db.protocol !== 'Tlv' && db.protocol !== 'TlvRaw') return false
+    if (isQueryOnlyFrame(a) || isQueryOnlyFrame(b)) return false
     const elsA = da.elements || []
     const elsB = db.elements || []
     // Empty ACK vs full values — not comparable
@@ -1247,7 +1260,7 @@ async function runMultiFrameBreakdown(ordered) {
         lines.push(...formatSparseValuesTimeline(decodedList, ordered, t0))
         lines.push(...formatBinaryBodyDiffs(decodedList, ordered, t0))
 
-        // TLV delta: prefer full values-frame pairs (more tags) with actual changes.
+        // TLV delta: prefer RX values dumps with real tag changes (not query_type polls).
         let best = null
         for (let i = 0; i < decodedList.length; i++) {
             for (let j = i + 1; j < decodedList.length; j++) {
@@ -1259,8 +1272,14 @@ async function runMultiFrameBreakdown(ordered) {
                 const score =
                     summary.appeared.length + summary.disappeared.length + summary.changed.length
                 if (score === 0) continue
-                // Weight full dumps over single-tag sparse frames
-                const rank = score * 100 + nTags
+                const envA = parseEnvelopeNotes(decodedList[i].decode.notes)
+                const envB = parseEnvelopeNotes(decodedList[j].decode.notes)
+                const dirA = ordered[i].dataset.dir || decodedList[i].dir || 'rx'
+                const dirB = ordered[j].dataset.dir || decodedList[j].dir || 'rx'
+                // Weight: change count, then tag richness, then RX values (b6=0x04)
+                let rank = score * 100 + nTags
+                if (dirA === 'rx' && dirB === 'rx') rank += 30
+                if (envA && envA.b6 === 0x04 && envB && envB.b6 === 0x04) rank += 50
                 if (!best || rank > best.rank || (rank === best.rank && j > best.j)) {
                     best = { i, j, mapA, mapB, summary, score, rank }
                 }
