@@ -198,30 +198,16 @@ impl Device {
         }
     }
 
+    /// Live-capture F017 template from PR #96 (43 bytes).
+    /// Hex: `f017ffffffffffffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff`
+    /// Zeros at indices 23–25, 28, 33 (not shifted by one).
+    const F017_BASE_HEX: &'static str =
+        "f017ffffffffffffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+
     fn base_f017() -> [u8; 43] {
-        let mut b = [0xffu8; 43];
-        b[0] = 0xf0;
-        b[1] = 0x17;
-        // trailing pattern from live captures
-        b[24] = 0x00;
-        b[25] = 0x00;
-        b[26] = 0x00;
-        b[27] = 0xff;
-        b[28] = 0xff;
-        b[29] = 0x00;
-        b[30] = 0xff;
-        b[31] = 0xff;
-        b[32] = 0xff;
-        b[33] = 0xff;
-        b[34] = 0x00;
-        b[35] = 0xff;
-        b[36] = 0xff;
-        b[37] = 0xff;
-        b[38] = 0xff;
-        b[39] = 0xff;
-        b[40] = 0xff;
-        b[41] = 0xff;
-        b[42] = 0xff;
+        let v = hex::decode(Self::F017_BASE_HEX).expect("F017 base hex");
+        let mut b = [0u8; 43];
+        b.copy_from_slice(&v);
         b
     }
 }
@@ -454,71 +440,108 @@ mod tests {
         assert!(h.to_ascii_lowercase().contains("f0ed1211"));
     }
 
+    /// PR #96 template — only command bytes may differ; trailing zero pattern is fixed.
+    const F017_BASE: &str =
+        "f017ffffffffffffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+
+    /// Full AABB live captures from PR #96 (inner body after AA/len, before checksum/BB).
+    const FRIDGE_SET_5C_BODY: &str =
+        "f017ff02ffffffffffff01ffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+    const FREEZER_SET_M18C_BODY: &str =
+        "f017ffff03ffffffffff01ffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+    const PURE_OFF_BODY: &str =
+        "f017ffffffff01ffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+    const PURE_POWER_BODY: &str =
+        "f017ffffffff03ffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+    const PURE_AUTO_BODY: &str =
+        "f017ffffffff02ffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+    const EXPRESS_ON_BODY: &str =
+        "f017ffffff02ffffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
+
+    fn aabb_inner(packet: &[u8]) -> Vec<u8> {
+        if packet.first() == Some(&0xaa) && packet.len() >= 4 {
+            packet[2..packet.len() - 2].to_vec()
+        } else {
+            packet.to_vec()
+        }
+    }
+
+    fn expected_with_overrides(overrides: &[(usize, u8)]) -> Vec<u8> {
+        let mut b = hex_decode(F017_BASE);
+        for &(i, v) in overrides {
+            b[i] = v;
+        }
+        b
+    }
+
     #[test]
-    fn set_fridge_5c_encodes_raw_2() {
+    fn base_f017_matches_pr96_template_exactly() {
+        let base = Device::base_f017();
+        assert_eq!(hex_encode(&base).to_ascii_lowercase(), F017_BASE);
+        // Critical trailing zeros (skeptic off-by-one: not 24-26/29/34)
+        assert_eq!(base[23], 0x00);
+        assert_eq!(base[24], 0x00);
+        assert_eq!(base[25], 0x00);
+        assert_eq!(base[26], 0xff);
+        assert_eq!(base[28], 0x00);
+        assert_eq!(base[33], 0x00);
+        assert_eq!(base[34], 0xff);
+    }
+
+    #[test]
+    fn set_fridge_5c_full_body_matches_pr_capture() {
         let (_, thinq, dev) = make();
         thinq.reset_recorder();
         dev.set_property("fridge_setpoint", "5");
-        let body = &thinq.outbox()[0];
-        // body is AABB-wrapped; find F017 payload
-        let h = hex_encode(body).to_ascii_lowercase();
-        assert!(h.contains("f017"));
-        // after f017: ff 02 (raw fridge = 7-5=2)
-        assert!(h.contains("f017ff02") || h.contains("f017") && body.windows(3).any(|w| w == [0xf0, 0x17, 0xff] || true));
-        // Check raw byte at fridge position in body after envelope strip is hard;
-        // ensure command contains the F017 family and tempUnit 01 at index 10 of body.
-        let inner = if body[0] == 0xaa {
-            // AABB: AA len body... checksum BB — body starts at index 2
-            &body[2..body.len() - 2]
-        } else {
-            body.as_slice()
-        };
-        assert_eq!(inner[0], 0xf0);
-        assert_eq!(inner[1], 0x17);
-        assert_eq!(inner[3], 2); // 7-5
-        assert_eq!(inner[10], 0x01);
+        let inner = aabb_inner(&thinq.outbox()[0]);
+        assert_eq!(
+            hex_encode(&inner).to_ascii_lowercase(),
+            FRIDGE_SET_5C_BODY,
+            "full F017 body must match PR #96 live capture"
+        );
+        assert_eq!(inner, expected_with_overrides(&[(3, 2), (10, 0x01)]));
     }
 
     #[test]
-    fn set_pure_and_express() {
-        let (_, thinq, dev) = make();
-        thinq.reset_recorder();
-        dev.set_property("pure_option", "Power");
-        let inner = {
-            let b = thinq.outbox()[0].clone();
-            if b[0] == 0xaa {
-                b[2..b.len() - 2].to_vec()
-            } else {
-                b
-            }
-        };
-        assert_eq!(inner[6], 0x03);
-        thinq.reset_recorder();
-        dev.set_property("express_freeze", "ON");
-        let inner = {
-            let b = thinq.outbox()[0].clone();
-            if b[0] == 0xaa {
-                b[2..b.len() - 2].to_vec()
-            } else {
-                b
-            }
-        };
-        assert_eq!(inner[5], 0x02);
-    }
-
-    #[test]
-    fn set_freezer_m18_raw_3() {
+    fn set_freezer_m18_full_body_matches_pr_capture() {
         let (_, thinq, dev) = make();
         thinq.reset_recorder();
         dev.set_property("freezer_setpoint", "-18");
-        let b = thinq.outbox()[0].clone();
-        let inner = if b[0] == 0xaa {
-            &b[2..b.len() - 2]
-        } else {
-            b.as_slice()
-        };
-        // raw = -(-18 + 15) = -(-3) wait: formula raw = -(C + 15) = -(-18+15) = -(-3) = 3
-        assert_eq!(inner[4], 3);
-        assert_eq!(inner[10], 0x01);
+        let inner = aabb_inner(&thinq.outbox()[0]);
+        assert_eq!(
+            hex_encode(&inner).to_ascii_lowercase(),
+            FREEZER_SET_M18C_BODY
+        );
+        assert_eq!(inner, expected_with_overrides(&[(4, 3), (10, 0x01)]));
+    }
+
+    #[test]
+    fn set_pure_options_full_body_matches_pr_capture() {
+        let (_, thinq, dev) = make();
+        for (label, body, raw) in [
+            ("Off", PURE_OFF_BODY, 0x01u8),
+            ("Power", PURE_POWER_BODY, 0x03),
+            ("Automatic", PURE_AUTO_BODY, 0x02),
+        ] {
+            thinq.reset_recorder();
+            dev.set_property("pure_option", label);
+            let inner = aabb_inner(&thinq.outbox()[0]);
+            assert_eq!(
+                hex_encode(&inner).to_ascii_lowercase(),
+                body,
+                "pure {label}"
+            );
+            assert_eq!(inner, expected_with_overrides(&[(6, raw)]));
+        }
+    }
+
+    #[test]
+    fn set_express_on_full_body_matches_pr_capture() {
+        let (_, thinq, dev) = make();
+        thinq.reset_recorder();
+        dev.set_property("express_freeze", "ON");
+        let inner = aabb_inner(&thinq.outbox()[0]);
+        assert_eq!(hex_encode(&inner).to_ascii_lowercase(), EXPRESS_ON_BODY);
+        assert_eq!(inner, expected_with_overrides(&[(5, 0x02)]));
     }
 }
