@@ -18,6 +18,14 @@ document.addEventListener('DOMContentLoaded', function () {
     })
 })
 
+/** Bump when sequence-export / decode UI changes so you can confirm the binary embeds this file. */
+const PANEL_UI_REV = '931e13a-seq'
+
+document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById('panel_ui_rev')
+    if (el) el.textContent = `ui ${PANEL_UI_REV}`
+})
+
 const STATUS_OK = `<i class="tiny material-icons" style="color:#3dd68c">check</i>`
 const STATUS_ERROR = `<i class="tiny material-icons" style="color:#f07178">error</i>`
 const STATUS_UNKNOWN = `<i class="tiny material-icons" style="color:#8b9bb0">question_mark</i>`
