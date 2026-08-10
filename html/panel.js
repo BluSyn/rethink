@@ -623,6 +623,120 @@ function tagMapFromDecode(dec) {
     return map
 }
 
+/** Device identity for RE paste context (from detail bar / selection). */
+function deviceContextLines() {
+    const id = selectedDeviceId || '—'
+    const model = (get('decode_model') && get('decode_model').value) || '—'
+    let platform = '—'
+    let deviceType = '—'
+    let mapped = '—'
+    let bridged = '—'
+    if (selectedDeviceId && devices[selectedDeviceId]) {
+        const s = devices[selectedDeviceId].remoteState || {}
+        platform = s.platform || platform
+        deviceType = s.deviceType || deviceType
+        mapped = s.mapped === true ? 'yes' : s.mapped === false ? 'no' : mapped
+        bridged = s.bridged === true ? 'yes' : s.bridged === false ? 'no' : bridged
+    }
+    const bar = get('detail_bar')
+    if (bar) {
+        const grab = (label) => {
+            const labs = bar.querySelectorAll('.di label')
+            for (const lab of labs) {
+                if (lab.textContent.trim().toLowerCase() === label.toLowerCase()) {
+                    const span = lab.parentElement && lab.parentElement.querySelector('span')
+                    return span ? span.textContent.trim() : null
+                }
+            }
+            return null
+        }
+        platform = grab('Platform') || platform
+        deviceType = grab('Device type') || deviceType
+        mapped = grab('HA mapped') || mapped
+        bridged = grab('Bridged') || bridged
+        const name = grab('Name')
+        const mid = grab('Model')
+        return {
+            id: grab('ID') || id,
+            modelId: mid && mid !== '—' ? mid : model,
+            modelName: name || '—',
+            platform,
+            deviceType,
+            mapped,
+            bridged,
+        }
+    }
+    return { id, modelId: model, modelName: '—', platform, deviceType, mapped, bridged }
+}
+
+/**
+ * Single-frame section (raw hex + TLV list + full export) for paste/debug context.
+ * @param {'A'|'B'} label
+ */
+function formatFrameSection(label, decoded, payload, dir, ts) {
+    const lines = []
+    const kind = decoded.kind || (isClipJsonPayload(payload) ? 'clip' : 'hex')
+    const iso = ts != null ? new Date(ts).toISOString() : '?'
+    const direction = dir === 'tx' ? 'toDevice' : 'fromDevice'
+    const hex =
+        kind === 'hex' && decoded.decode && decoded.decode.hex
+            ? decoded.decode.hex
+            : String(payload || '')
+                  .replace(/[^0-9a-fA-F]/g, '')
+                  .toLowerCase() || payload
+
+    lines.push(`## Frame ${label}`)
+    lines.push(`label: ${label}`)
+    lines.push(`timestamp: ${iso}`)
+    lines.push(`direction: ${direction} (${dir})`)
+    lines.push(`kind: ${kind}`)
+    if (kind === 'hex' && decoded.decode) {
+        lines.push(`protocol: ${decoded.decode.protocol || '?'}`)
+        if (decoded.decode.crcOk != null) lines.push(`crcOk: ${decoded.decode.crcOk}`)
+        if ((decoded.decode.notes || []).length)
+            lines.push(`notes: ${decoded.decode.notes.join('; ')}`)
+    }
+    lines.push(`hex: ${hex}`)
+    lines.push('')
+
+    if (kind === 'clip') {
+        lines.push('### CLIP payload')
+        try {
+            lines.push(JSON.stringify(JSON.parse(payload), null, 2))
+        } catch {
+            lines.push(payload)
+        }
+        lines.push('')
+        return lines
+    }
+
+    if (kind === 'hex' && decoded.decode) {
+        const els = decoded.decode.elements || []
+        lines.push('### TLV elements')
+        if (!els.length) {
+            lines.push('(none)')
+            if (decoded.decode.aabbBody) lines.push(`aabbBody: ${decoded.decode.aabbBody}`)
+        } else {
+            for (const e of els) {
+                const hx = '0x' + Number(e.t).toString(16).padStart(3, '0')
+                if (e.known) lines.push(`- ${hx} (${e.name || '?'}) = ${e.v}`)
+                else lines.push(`- ${hx} **UNKNOWN** = ${e.v}`)
+            }
+        }
+        lines.push('')
+        if (decoded.text) {
+            lines.push('### Full single-frame export')
+            lines.push(decoded.text.trim())
+            lines.push('')
+        }
+        return lines
+    }
+
+    lines.push('(unable to decode frame)')
+    lines.push('')
+    return lines
+}
+
 async function runFrameDelta(elA, elB) {
     const payloadA = elA.dataset.payload || ''
     const payloadB = elB.dataset.payload || ''
@@ -631,6 +745,7 @@ async function runFrameDelta(elA, elB) {
     const tsA = parseTsMs(elA)
     const tsB = parseTsMs(elB)
     const dt = tsA != null && tsB != null ? Math.abs(tsB - tsA) : null
+    const dev = deviceContextLines()
 
     get('decode_hex').value = payloadB
     get('decode_direction').value = dirB === 'tx' ? 'toDevice' : 'fromDevice'
@@ -653,6 +768,17 @@ async function runFrameDelta(elA, elB) {
 
         const lines = []
         lines.push('# Frame delta (rethink management)')
+        lines.push('')
+        lines.push('## Device')
+        lines.push(`modelId: ${dev.modelId}`)
+        lines.push(`modelName: ${dev.modelName}`)
+        lines.push(`deviceId: ${dev.id}`)
+        lines.push(`platform: ${dev.platform}`)
+        lines.push(`deviceType: ${dev.deviceType}`)
+        lines.push(`haMapped: ${dev.mapped}`)
+        lines.push(`bridged: ${dev.bridged}`)
+        lines.push('')
+        lines.push('## Timing')
         lines.push(`time_delta_ms: ${dt != null ? dt : 'unknown'}`)
         lines.push(
             `A: ts=${tsA != null ? new Date(tsA).toISOString() : '?'} dir=${dirA} kind=${a.kind}`,
@@ -662,15 +788,14 @@ async function runFrameDelta(elA, elB) {
         )
         lines.push('')
 
+        // Full context for each frame (raw + decode), same spirit as single-frame breakdown
+        lines.push(...formatFrameSection('A', a, payloadA, dirA, tsA))
+        lines.push(...formatFrameSection('B', b, payloadB, dirB, tsB))
+
         if (a.kind === 'clip' || b.kind === 'clip') {
             lines.push('## Note')
             lines.push('One or both frames are CLIP JSON (rethink→device control), not TLV.')
-            lines.push('')
-            lines.push('### A')
-            lines.push(a.kind === 'clip' ? payloadA : a.text || JSON.stringify(a.decode, null, 2))
-            lines.push('')
-            lines.push('### B')
-            lines.push(b.kind === 'clip' ? payloadB : b.text || JSON.stringify(b.decode, null, 2))
+            lines.push('Tag-level delta is skipped when CLIP is involved; see Frame A/B sections above.')
             get('text_breakdown').value = lines.join('\n')
             get('decode_summary').innerHTML = `delta · CLIP involved · Δt=<b>${
                 dt != null ? dt + 'ms' : '?'
@@ -706,27 +831,24 @@ async function runFrameDelta(elA, elB) {
             }
         }
 
+        lines.push('## Delta summary')
         lines.push(`protocol A=${a.decode.protocol} B=${b.decode.protocol}`)
         lines.push('')
-        lines.push('## Appeared in B (not in A)')
+        lines.push('### Appeared in B (not in A)')
         if (!appeared.length) lines.push('(none)')
         else
             appeared.forEach(({ label, eb }) =>
-                lines.push(
-                    `- ${label} = ${eb.v} ${eb.known ? '[known]' : '**UNKNOWN**'}`,
-                ),
+                lines.push(`- ${label} = ${eb.v} ${eb.known ? '[known]' : '**UNKNOWN**'}`),
             )
         lines.push('')
-        lines.push('## Disappeared (in A, not B)')
+        lines.push('### Disappeared (in A, not B)')
         if (!disappeared.length) lines.push('(none)')
         else
             disappeared.forEach(({ label, ea }) =>
-                lines.push(
-                    `- ${label} was ${ea.v} ${ea.known ? '[known]' : '**UNKNOWN**'}`,
-                ),
+                lines.push(`- ${label} was ${ea.v} ${ea.known ? '[known]' : '**UNKNOWN**'}`),
             )
         lines.push('')
-        lines.push('## Changed values')
+        lines.push('### Changed values')
         if (!changed.length) lines.push('(none)')
         else
             changed.forEach(({ label, ea, eb }) =>
@@ -737,16 +859,19 @@ async function runFrameDelta(elA, elB) {
                 ),
             )
         lines.push('')
-        lines.push('## Unchanged tags')
+        lines.push('### Unchanged tags')
         lines.push(`(${same.length} tags)`)
         lines.push('')
-        lines.push('## Unknown-tag focus (appeared / disappeared / changed)')
+        lines.push('### Unknown-tag focus (appeared / disappeared / changed)')
         if (!unkChanged.length) lines.push('(none — all delta tags are catalogued)')
         else unkChanged.forEach((s) => lines.push(s))
         lines.push('')
-        lines.push('## Hint for RE')
+        lines.push('### Hint for RE')
         lines.push(
             `If Δt is small and a single unknown tag changed, it likely encodes the action between the two samples.`,
+        )
+        lines.push(
+            `Prefer comparing frames of the same UART kind/protocol (e.g. both climate values a70204…).`,
         )
 
         get('text_breakdown').value = lines.join('\n')
