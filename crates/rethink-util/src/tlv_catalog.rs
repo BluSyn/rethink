@@ -132,7 +132,7 @@ pub fn classify_tlvs(items: &[(u16, u32)]) -> Vec<ClassifiedTlv> {
         .collect()
 }
 
-/// Build LLM-oriented export text for reverse engineering.
+/// Compact single-frame breakdown for humans and analysis tools.
 pub fn llm_export_text(
     model_id: Option<&str>,
     direction: Option<&str>,
@@ -140,39 +140,33 @@ pub fn llm_export_text(
     classified: &[ClassifiedTlv],
 ) -> String {
     let mut out = String::new();
-    out.push_str("# ThinQ packet RE export (rethink)\n");
+    out.push_str("# ThinQ TLV frame\n");
     if let Some(m) = model_id {
         out.push_str(&format!("modelId: {m}\n"));
     }
     if let Some(d) = direction {
         out.push_str(&format!("direction: {d}\n"));
     }
-    out.push_str(&format!("hex: {hex_packet}\n\n"));
-    out.push_str("## TLV elements\n");
+    out.push_str(&format!("hex: {hex_packet}\n"));
+    out.push_str("tags:\n");
     let mut unknowns = Vec::new();
     for c in classified {
         if c.known {
             out.push_str(&format!(
-                "- 0x{:03x} ({}) = {}\n",
+                "  0x{:03x} {} = {}\n",
                 c.t,
                 c.name.unwrap_or("?"),
                 c.v
             ));
         } else {
-            out.push_str(&format!("- 0x{:03x} **UNKNOWN** = {}\n", c.t, c.v));
+            out.push_str(&format!("  0x{:03x} UNKNOWN = {}\n", c.t, c.v));
             unknowns.push(c);
         }
     }
-    out.push_str("\n## Unknown tags (copy into an LLM)\n");
-    if unknowns.is_empty() {
-        out.push_str("(none)\n");
-    } else {
-        out.push_str(
-            "Please help reverse-engineer these ThinQ TLV tags seen on the wire.\n\
-             Context: LG ThinQ2 CLIP UART TLV (10-bit type, var length). Related known tags: power=0x1f7, mode=0x1f9, fan=0x1fa, humidity=0x336/0x253.\n\n",
-        );
+    if !unknowns.is_empty() {
+        out.push_str("unknown:\n");
         for c in unknowns {
-            out.push_str(&format!("- tag=0x{:03x} value={} (decimal)\n", c.t, c.v));
+            out.push_str(&format!("  0x{:03x} = {}\n", c.t, c.v));
         }
     }
     out
@@ -197,6 +191,7 @@ mod tests {
         assert!(text.contains("UNKNOWN"));
         assert!(text.contains("0xabc"));
         assert!(text.contains("RAC_056905_WW"));
-        assert!(text.contains("copy into an LLM") || text.contains("reverse-engineer"));
+        assert!(text.contains("unknown:"));
+        assert!(!text.to_lowercase().contains("copy into an llm"));
     }
 }

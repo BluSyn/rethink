@@ -454,22 +454,34 @@ function paintFrameSelection() {
     updateDiffBanner()
 }
 
+function framesInTimeOrder(els) {
+    return [...els].sort((a, b) => {
+        const ta = parseTsMs(a) ?? 0
+        const tb = parseTsMs(b) ?? 0
+        if (ta !== tb) return ta - tb
+        // stable: DOM order as tie-breaker
+        const all = allFrameEls()
+        return all.indexOf(a) - all.indexOf(b)
+    })
+}
+
 function updateDiffBanner() {
     const b = get('diff_banner')
     if (!b) return
     if (selectedFrames.length === 0) {
         b.textContent = ''
     } else if (selectedFrames.length === 1) {
-        b.textContent = '1 frame selected · Ctrl/⌘+click another for delta · Shift+click for range'
+        b.textContent = '1 frame · Ctrl/⌘+click multi · Shift+click range'
     } else {
-        const a = selectedFrames[0]
-        const z = selectedFrames[selectedFrames.length - 1]
-        const ta = parseTsMs(a)
-        const tb = parseTsMs(z)
+        const ordered = framesInTimeOrder(selectedFrames)
+        const ta = parseTsMs(ordered[0])
+        const tb = parseTsMs(ordered[ordered.length - 1])
         const dt = ta != null && tb != null ? Math.abs(tb - ta) : null
-        b.textContent = `${selectedFrames.length} frames · A↔B Δt=${
+        const rx = ordered.filter((e) => e.dataset.dir === 'rx').length
+        const tx = ordered.filter((e) => e.dataset.dir === 'tx').length
+        b.textContent = `${ordered.length} frames (rx=${rx} tx=${tx}) · span ${
             dt != null ? dt + ' ms' : '?'
-        } · showing delta of first & last`
+        } · full sequence in text breakdown`
     }
 }
 
@@ -503,7 +515,7 @@ function onFrameClick(ev, el) {
     paintFrameSelection()
 
     if (selectedFrames.length >= 2) {
-        runFrameDelta(selectedFrames[0], selectedFrames[selectedFrames.length - 1])
+        runMultiFrameBreakdown(framesInTimeOrder(selectedFrames))
     } else if (selectedFrames.length === 1) {
         loadFrameIntoDecoder(selectedFrames[0])
     }
@@ -670,14 +682,15 @@ function deviceContextLines() {
 }
 
 /**
- * Single-frame section (raw hex + TLV list + full export) for paste/debug context.
- * @param {'A'|'B'} label
+ * Compact one-frame block for multi-frame transcripts (no nested full exports).
+ * @param {number|string} index 1-based
  */
-function formatFrameSection(label, decoded, payload, dir, ts) {
+function formatFrameCompact(index, decoded, payload, dir, ts, t0) {
     const lines = []
     const kind = decoded.kind || (isClipJsonPayload(payload) ? 'clip' : 'hex')
     const iso = ts != null ? new Date(ts).toISOString() : '?'
-    const direction = dir === 'tx' ? 'toDevice' : 'fromDevice'
+    const rel = t0 != null && ts != null ? `+${ts - t0}ms` : ''
+    const direction = dir === 'tx' ? 'toDevice' : dir === 'rx' ? 'fromDevice' : dir
     const hex =
         kind === 'hex' && decoded.decode && decoded.decode.hex
             ? decoded.decode.hex
@@ -685,24 +698,21 @@ function formatFrameSection(label, decoded, payload, dir, ts) {
                   .replace(/[^0-9a-fA-F]/g, '')
                   .toLowerCase() || payload
 
-    lines.push(`## Frame ${label}`)
-    lines.push(`label: ${label}`)
-    lines.push(`timestamp: ${iso}`)
-    lines.push(`direction: ${direction} (${dir})`)
-    lines.push(`kind: ${kind}`)
+    const head = [`#${index}`, dir.toUpperCase(), direction, rel || iso].filter(Boolean).join(' ')
+    lines.push(`### ${head}`)
     if (kind === 'hex' && decoded.decode) {
-        lines.push(`protocol: ${decoded.decode.protocol || '?'}`)
-        if (decoded.decode.crcOk != null) lines.push(`crcOk: ${decoded.decode.crcOk}`)
-        if ((decoded.decode.notes || []).length)
-            lines.push(`notes: ${decoded.decode.notes.join('; ')}`)
+        const p = decoded.decode.protocol || '?'
+        const crc = decoded.decode.crcOk != null ? ` crc=${decoded.decode.crcOk}` : ''
+        const notes = (decoded.decode.notes || []).join('; ')
+        lines.push(`protocol=${p}${crc}${notes ? ' · ' + notes : ''}`)
+    } else if (kind === 'clip') {
+        lines.push('protocol=CLIP')
     }
     lines.push(`hex: ${hex}`)
-    lines.push('')
 
     if (kind === 'clip') {
-        lines.push('### CLIP payload')
         try {
-            lines.push(JSON.stringify(JSON.parse(payload), null, 2))
+            lines.push(JSON.stringify(JSON.parse(payload)))
         } catch {
             lines.push(payload)
         }
@@ -711,201 +721,193 @@ function formatFrameSection(label, decoded, payload, dir, ts) {
     }
 
     if (kind === 'hex' && decoded.decode) {
-        const els = decoded.decode.elements || []
-        lines.push('### TLV elements')
+        const dec = decoded.decode
+        if (dec.protocol === 'UartBinary') {
+            // Prefer compact server text if present, else body only
+            if (decoded.text) {
+                // strip leading # title lines already covered
+                const body = decoded.text
+                    .split('\n')
+                    .filter((l) => !l.startsWith('# ') && !l.startsWith('modelId:') && !l.startsWith('direction:'))
+                    .join('\n')
+                    .trim()
+                if (body) lines.push(body)
+            } else if (dec.aabbBody) {
+                lines.push(`body: ${dec.aabbBody}`)
+            }
+            lines.push('')
+            return lines
+        }
+        const els = dec.elements || []
         if (!els.length) {
-            lines.push('(none)')
-            if (decoded.decode.aabbBody) lines.push(`aabbBody: ${decoded.decode.aabbBody}`)
+            if (dec.aabbBody) lines.push(`body: ${dec.aabbBody}`)
+            else lines.push('tags: (none)')
         } else {
-            for (const e of els) {
+            const parts = els.map((e) => {
                 const hx = '0x' + Number(e.t).toString(16).padStart(3, '0')
-                if (e.known) lines.push(`- ${hx} (${e.name || '?'}) = ${e.v}`)
-                else lines.push(`- ${hx} **UNKNOWN** = ${e.v}`)
+                if (e.known) return `${hx}:${e.name || '?'}=${e.v}`
+                return `${hx}:UNKNOWN=${e.v}`
+            })
+            // Keep multi-line if many tags, single line if few
+            if (parts.length <= 8) lines.push(`tags: ${parts.join(' ')}`)
+            else {
+                lines.push('tags:')
+                for (const p of parts) lines.push(`  ${p}`)
             }
         }
         lines.push('')
-        if (decoded.text) {
-            lines.push('### Full single-frame export')
-            lines.push(decoded.text.trim())
-            lines.push('')
-        }
         return lines
     }
 
-    lines.push('(unable to decode frame)')
+    lines.push('(undecoded)')
     lines.push('')
     return lines
 }
 
-async function runFrameDelta(elA, elB) {
-    const payloadA = elA.dataset.payload || ''
-    const payloadB = elB.dataset.payload || ''
-    const dirA = elA.dataset.dir || 'rx'
-    const dirB = elB.dataset.dir || 'rx'
-    const tsA = parseTsMs(elA)
-    const tsB = parseTsMs(elB)
-    const dt = tsA != null && tsB != null ? Math.abs(tsB - tsA) : null
-    const dev = deviceContextLines()
+function tlvDeltaSummary(mapA, mapB) {
+    const appeared = []
+    const disappeared = []
+    const changed = []
+    const allTags = new Set([...mapA.keys(), ...mapB.keys()])
+    for (const t of [...allTags].sort((x, y) => x - y)) {
+        const ea = mapA.get(t)
+        const eb = mapB.get(t)
+        const name = (eb && eb.name) || (ea && ea.name) || null
+        const label = `0x${t.toString(16)}${name ? '(' + name + ')' : ''}`
+        if (!ea && eb) appeared.push(`${label}=${eb.v}${eb.known ? '' : '*'}`)
+        else if (ea && !eb) disappeared.push(`${label} was ${ea.v}${ea.known ? '' : '*'}`)
+        else if (ea && eb && ea.v !== eb.v)
+            changed.push(`${label}: ${ea.v}→${eb.v}${ea.known && eb.known ? '' : '*'}`)
+    }
+    return { appeared, disappeared, changed }
+}
 
-    get('decode_hex').value = payloadB
-    get('decode_direction').value = dirB === 'tx' ? 'toDevice' : 'fromDevice'
-    get('decode_source').textContent = `Δ A→B · ${dt != null ? dt + ' ms' : 'Δt ?'}`
+/**
+ * Multi-select breakdown: all frames in time order (rx+tx), compact; optional first↔last TLV delta.
+ * @param {HTMLElement[]} ordered
+ */
+async function runMultiFrameBreakdown(ordered) {
+    if (!ordered || ordered.length < 2) return
+    const dev = deviceContextLines()
+    const t0 = parseTsMs(ordered[0])
+    const tLast = parseTsMs(ordered[ordered.length - 1])
+    const span = t0 != null && tLast != null ? tLast - t0 : null
+
+    const last = ordered[ordered.length - 1]
+    get('decode_hex').value = last.dataset.payload || ''
+    get('decode_direction').value = last.dataset.dir === 'tx' ? 'toDevice' : 'fromDevice'
+    get('decode_source').textContent = `${ordered.length} frames · ${
+        span != null ? span + 'ms' : '?'
+    }`
 
     try {
-        const [a, b] = await Promise.all([
-            decodePayloadSilent(payloadA, dirA),
-            decodePayloadSilent(payloadB, dirB),
-        ])
+        const decodedList = await Promise.all(
+            ordered.map((el) =>
+                decodePayloadSilent(el.dataset.payload || '', el.dataset.dir || 'rx'),
+            ),
+        )
 
-        // Show B in the table/view as the "current" frame
-        if (b.kind === 'clip') {
-            renderClipBreakdown(payloadB)
-        } else if (b.decode) {
-            renderDecode(b.decode)
-            lastDecode = b.decode
-            renderPayloadView(b.decode.hex || payloadB, null)
+        // UI focus: last frame
+        const lastDec = decodedList[decodedList.length - 1]
+        const lastPayload = last.dataset.payload || ''
+        if (lastDec.kind === 'clip') {
+            renderClipBreakdown(lastPayload)
+        } else if (lastDec.decode) {
+            renderDecode(lastDec.decode)
+            lastDecode = lastDec.decode
+            renderPayloadView(lastDec.decode.hex || lastPayload, null)
         }
 
         const lines = []
-        lines.push('# Frame delta (rethink management)')
-        lines.push('')
-        lines.push('## Device')
-        lines.push(`modelId: ${dev.modelId}`)
-        lines.push(`modelName: ${dev.modelName}`)
-        lines.push(`deviceId: ${dev.id}`)
-        lines.push(`platform: ${dev.platform}`)
-        lines.push(`deviceType: ${dev.deviceType}`)
-        lines.push(`haMapped: ${dev.mapped}`)
-        lines.push(`bridged: ${dev.bridged}`)
-        lines.push('')
-        lines.push('## Timing')
-        lines.push(`time_delta_ms: ${dt != null ? dt : 'unknown'}`)
+        lines.push('# ThinQ frame sequence')
         lines.push(
-            `A: ts=${tsA != null ? new Date(tsA).toISOString() : '?'} dir=${dirA} kind=${a.kind}`,
+            `device: ${dev.modelId} type=${dev.deviceType} id=${dev.id} platform=${dev.platform} mapped=${dev.mapped} bridged=${dev.bridged}`,
         )
         lines.push(
-            `B: ts=${tsB != null ? new Date(tsB).toISOString() : '?'} dir=${dirB} kind=${b.kind}`,
+            `frames: ${ordered.length} · t0=${
+                t0 != null ? new Date(t0).toISOString() : '?'
+            } · span_ms=${span != null ? span : '?'}`,
         )
         lines.push('')
+        lines.push('## Sequence (time order)')
 
-        // Full context for each frame (raw + decode), same spirit as single-frame breakdown
-        lines.push(...formatFrameSection('A', a, payloadA, dirA, tsA))
-        lines.push(...formatFrameSection('B', b, payloadB, dirB, tsB))
+        ordered.forEach((el, i) => {
+            const d = decodedList[i]
+            const payload = el.dataset.payload || ''
+            const dir = el.dataset.dir || 'rx'
+            const ts = parseTsMs(el)
+            lines.push(...formatFrameCompact(i + 1, d, payload, dir, ts, t0))
+        })
 
-        if (a.kind === 'clip' || b.kind === 'clip') {
-            lines.push('## Note')
-            lines.push('One or both frames are CLIP JSON (rethink→device control), not TLV.')
-            lines.push('Tag-level delta is skipped when CLIP is involved; see Frame A/B sections above.')
-            get('text_breakdown').value = lines.join('\n')
-            get('decode_summary').innerHTML = `delta · CLIP involved · Δt=<b>${
-                dt != null ? dt + 'ms' : '?'
-            }</b>`
-            return
-        }
-
-        const mapA = tagMapFromDecode(a.decode)
-        const mapB = tagMapFromDecode(b.decode)
-        const allTags = new Set([...mapA.keys(), ...mapB.keys()])
-        const appeared = []
-        const disappeared = []
-        const changed = []
-        const same = []
-        const unkChanged = []
-
-        for (const t of [...allTags].sort((x, y) => x - y)) {
-            const ea = mapA.get(t)
-            const eb = mapB.get(t)
-            const name = (eb && eb.name) || (ea && ea.name) || null
-            const label = `0x${t.toString(16)} (${name || '?'})`
-            if (!ea && eb) {
-                appeared.push({ t, eb, label })
-                if (!eb.known) unkChanged.push(`+ ${label} = ${eb.v}`)
-            } else if (ea && !eb) {
-                disappeared.push({ t, ea, label })
-                if (!ea.known) unkChanged.push(`- ${label} was ${ea.v}`)
-            } else if (ea && eb && ea.v !== eb.v) {
-                changed.push({ t, ea, eb, label })
-                if (!eb.known || !ea.known) unkChanged.push(`~ ${label}: ${ea.v} → ${eb.v}`)
-            } else if (ea && eb) {
-                same.push({ t, ea, label })
+        // Compact first↔last TLV delta when both are TLV-like
+        const first = decodedList[0]
+        const lastD = decodedList[decodedList.length - 1]
+        if (
+            first.kind === 'hex' &&
+            lastD.kind === 'hex' &&
+            first.decode &&
+            lastD.decode &&
+            first.decode.elements &&
+            lastD.decode.elements &&
+            first.decode.protocol !== 'UartBinary' &&
+            lastD.decode.protocol !== 'UartBinary'
+        ) {
+            const mapA = tagMapFromDecode(first.decode)
+            const mapB = tagMapFromDecode(lastD.decode)
+            const { appeared, disappeared, changed } = tlvDeltaSummary(mapA, mapB)
+            lines.push('## First→last TLV delta')
+            lines.push(
+                `protocols: ${first.decode.protocol} → ${lastD.decode.protocol} · * = unknown tag`,
+            )
+            if (!appeared.length && !disappeared.length && !changed.length) {
+                lines.push('(no tag changes)')
+            } else {
+                if (appeared.length) lines.push(`+ ${appeared.join(' · ')}`)
+                if (disappeared.length) lines.push(`- ${disappeared.join(' · ')}`)
+                if (changed.length) lines.push(`~ ${changed.join(' · ')}`)
             }
+
+            // Tag table annotations for last frame
+            const body = get('tlv_body')
+            if (body && lastD.decode.elements) {
+                body.innerHTML = ''
+                for (const el of lastD.decode.elements) {
+                    const tr = document.createElement('tr')
+                    const prev = mapA.get(el.t)
+                    let delta = ''
+                    if (!prev) delta = ' <span style="color:var(--ok)">(+)</span>'
+                    else if (prev.v !== el.v)
+                        delta = ` <span style="color:var(--warn)">(${prev.v}→${el.v})</span>`
+                    const status = el.known ? 'known' : 'unknown'
+                    const hasSpan = el.byteEnd != null && el.byteEnd > (el.byteStart || 0)
+                    tr.className = hasSpan ? 'has-span' : ''
+                    if (hasSpan) {
+                        tr.dataset.byteStart = String(el.byteStart)
+                        tr.dataset.byteEnd = String(el.byteEnd)
+                    }
+                    tr.innerHTML = `
+                        <td class="${status}"><code>${escapeHtml(
+                            el.hex || '0x' + Number(el.t).toString(16),
+                        )}</code></td>
+                        <td>${escapeHtml(el.name || '—')}${delta}</td>
+                        <td><code>${escapeHtml(String(el.v))}</code></td>
+                        <td class="${status}">${el.known ? 'known' : 'UNKNOWN'}</td>`
+                    if (hasSpan) attachTagHover(tr)
+                    body.appendChild(tr)
+                }
+            }
+            get('decode_summary').innerHTML = `sequence ${ordered.length} · span <b>${
+                span != null ? span + 'ms' : '?'
+            }</b> · +${appeared.length} −${disappeared.length} ~${changed.length}`
+        } else {
+            get('decode_summary').innerHTML = `sequence ${ordered.length} · span <b>${
+                span != null ? span + 'ms' : '?'
+            }</b>`
         }
 
-        lines.push('## Delta summary')
-        lines.push(`protocol A=${a.decode.protocol} B=${b.decode.protocol}`)
-        lines.push('')
-        lines.push('### Appeared in B (not in A)')
-        if (!appeared.length) lines.push('(none)')
-        else
-            appeared.forEach(({ label, eb }) =>
-                lines.push(`- ${label} = ${eb.v} ${eb.known ? '[known]' : '**UNKNOWN**'}`),
-            )
-        lines.push('')
-        lines.push('### Disappeared (in A, not B)')
-        if (!disappeared.length) lines.push('(none)')
-        else
-            disappeared.forEach(({ label, ea }) =>
-                lines.push(`- ${label} was ${ea.v} ${ea.known ? '[known]' : '**UNKNOWN**'}`),
-            )
-        lines.push('')
-        lines.push('### Changed values')
-        if (!changed.length) lines.push('(none)')
-        else
-            changed.forEach(({ label, ea, eb }) =>
-                lines.push(
-                    `- ${label}: ${ea.v} → ${eb.v} ${
-                        eb.known && ea.known ? '[known]' : '**UNKNOWN involved**'
-                    }`,
-                ),
-            )
-        lines.push('')
-        lines.push('### Unchanged tags')
-        lines.push(`(${same.length} tags)`)
-        lines.push('')
-        lines.push('### Unknown-tag focus (appeared / disappeared / changed)')
-        if (!unkChanged.length) lines.push('(none — all delta tags are catalogued)')
-        else unkChanged.forEach((s) => lines.push(s))
-        lines.push('')
-        lines.push('### Hint for RE')
-        lines.push(
-            `If Δt is small and a single unknown tag changed, it likely encodes the action between the two samples.`,
-        )
-        lines.push(
-            `Prefer comparing frames of the same UART kind/protocol (e.g. both climate values a70204…).`,
-        )
-
-        get('text_breakdown').value = lines.join('\n')
-        get('decode_summary').innerHTML = `delta A→B · Δt=<b>${
-            dt != null ? dt + 'ms' : '?'
-        }</b> · +${appeared.length} −${disappeared.length} ~${changed.length} · unkΔ=${
-            unkChanged.length
-        }`
-
-        // Tag table shows B's tags, with delta annotation in name column via data attrs
-        const body = get('tlv_body')
-        body.innerHTML = ''
-        const els = (b.decode && b.decode.elements) || []
-        for (const el of els) {
-            const tr = document.createElement('tr')
-            const prev = mapA.get(el.t)
-            let delta = ''
-            if (!prev) delta = ' <span style="color:var(--ok)">(+new)</span>'
-            else if (prev.v !== el.v)
-                delta = ` <span style="color:var(--warn)">(${prev.v}→${el.v})</span>`
-            const status = el.known ? 'known' : 'unknown'
-            tr.className = el.hexStart != null || el.byteStart != null ? 'has-span' : ''
-            tr.dataset.byteStart = el.byteStart != null ? el.byteStart : ''
-            tr.dataset.byteEnd = el.byteEnd != null ? el.byteEnd : ''
-            tr.innerHTML = `
-                <td class="${status}"><code>${escapeHtml(el.hex || '0x' + Number(el.t).toString(16))}</code></td>
-                <td>${escapeHtml(el.name || '—')}${delta}</td>
-                <td><code>${escapeHtml(String(el.v))}</code></td>
-                <td class="${status}">${el.known ? 'known' : 'UNKNOWN'}</td>`
-            attachTagHover(tr)
-            body.appendChild(tr)
-        }
+        get('text_breakdown').value = lines.join('\n').replace(/\n{3,}/g, '\n\n')
     } catch (err) {
-        M.toast({ html: `delta error: ${err}` })
+        M.toast({ html: `sequence error: ${err}` })
     }
 }
 

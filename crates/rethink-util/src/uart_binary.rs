@@ -212,7 +212,7 @@ pub fn analyze_uart_binary(
     }
 }
 
-/// Human / LLM-oriented export for a binary UART frame.
+/// Compact binary-frame breakdown (envelope + body + top heuristics).
 pub fn uart_binary_export_text(
     model_id: Option<&str>,
     direction: Option<&str>,
@@ -220,106 +220,47 @@ pub fn uart_binary_export_text(
     analysis: &UartBinaryAnalysis,
 ) -> String {
     let mut out = String::new();
-    out.push_str("# ThinQ UART binary RE export (rethink)\n");
-    out.push_str("classification: UartBinary (non-TLV payload)\n");
+    out.push_str("# ThinQ UART binary\n");
     if let Some(m) = model_id {
         out.push_str(&format!("modelId: {m}\n"));
     }
     if let Some(d) = direction {
         out.push_str(&format!("direction: {d}\n"));
     }
-    out.push_str(&format!("hex: {full_hex}\n\n"));
-
     let e = &analysis.envelope;
-    out.push_str("## UART envelope\n");
     out.push_str(&format!(
-        "- kind: 0x{:02x} — {}\n",
-        e.kind, e.kind_hint
+        "kind=0x{:02x} b5=0x{:02x} b6=0x{:02x} b7=0x{:02x} body_len={}\n",
+        e.kind, e.byte5, e.byte6, e.byte7, e.body_len
     ));
-    out.push_str(&format!(
-        "- byte5: 0x{:02x} — {}\n",
-        e.byte5, e.b5_hint
-    ));
-    out.push_str(&format!(
-        "- byte6: 0x{:02x} — {}\n",
-        e.byte6, e.b6_hint
-    ));
-    out.push_str(&format!("- byte7: 0x{:02x} (often seq / subtype)\n", e.byte7));
-    out.push_str(&format!("- body_len: {}\n", e.body_len));
+    out.push_str(&format!("kind: {}\n", e.kind_hint));
     if let Some(c) = e.crc_ok {
-        out.push_str(&format!("- crc_ok: {c}\n"));
+        out.push_str(&format!("crc_ok: {c}\n"));
     }
-    out.push_str(&format!("\n## Body ({})\n", analysis.body_len));
-    out.push_str(&format!("hex: {}\n", analysis.body_hex));
+    out.push_str(&format!("hex: {full_hex}\n"));
+    out.push_str(&format!("body: {}\n", analysis.body_hex));
     out.push_str(&format!(
-        "stats: zero={} nonzero={} unique_byte_values={}\n\n",
+        "stats: zero={} nonzero={} unique={}\n",
         analysis.zero_bytes, analysis.nonzero_bytes, analysis.unique_bytes
     ));
-
-    out.push_str("## Hex dump (body)\n");
-    out.push_str(&hex_dump(&analysis.body_hex));
-    out.push('\n');
-
-    out.push_str("## Heuristic field candidates (low confidence — verify by diff)\n");
-    if analysis.heuristics.is_empty() {
-        out.push_str("(none scored)\n");
-    } else {
-        for h in &analysis.heuristics {
-            if h.width == 0 {
-                out.push_str(&format!("- {}\n", h.interpretation));
-                continue;
-            }
-            out.push_str(&format!(
-                "- off={} width={} {} raw={} conf={} — {}\n",
-                h.offset, h.width, h.endian, h.raw, h.confidence, h.interpretation
-            ));
+    out.push_str("candidates:\n");
+    let mut n = 0;
+    for h in &analysis.heuristics {
+        if h.width == 0 {
+            continue;
         }
+        // Prefer medium-signal hits; cap list
+        if n >= 12 {
+            out.push_str("  …\n");
+            break;
+        }
+        out.push_str(&format!(
+            "  +{} {} raw={} — {}\n",
+            h.offset, h.endian, h.raw, h.interpretation
+        ));
+        n += 1;
     }
-    out.push_str("\n## RE method (please help)\n");
-    for n in &analysis.re_notes {
-        out.push_str(&format!("- {n}\n"));
-    }
-    out.push_str(
-        "\nPlease propose a field map for this body given the envelope and heuristics, \
-         and suggest experiments (app toggles / panel actions) to confirm each field.\n",
-    );
-    out
-}
-
-fn hex_dump(body_hex: &str) -> String {
-    let bytes: Vec<u8> = (0..body_hex.len())
-        .step_by(2)
-        .filter_map(|i| u8::from_str_radix(body_hex.get(i..i + 2)?, 16).ok())
-        .collect();
-    let mut out = String::new();
-    for (row, chunk) in bytes.chunks(16).enumerate() {
-        out.push_str(&format!("{:04x}: ", row * 16));
-        for (i, b) in chunk.iter().enumerate() {
-            if i == 8 {
-                out.push(' ');
-            }
-            out.push_str(&format!("{b:02x} "));
-        }
-        // ASCII
-        let pad = 16 - chunk.len();
-        for _ in 0..pad {
-            out.push_str("   ");
-        }
-        if pad > 8 {
-            // already spaced
-        } else if chunk.len() <= 8 {
-            out.push(' ');
-        }
-        out.push_str(" |");
-        for b in chunk {
-            let c = if (0x20..0x7f).contains(b) {
-                *b as char
-            } else {
-                '.'
-            };
-            out.push(c);
-        }
-        out.push_str("|\n");
+    if n == 0 {
+        out.push_str("  (none)\n");
     }
     out
 }
@@ -339,8 +280,9 @@ mod tests {
         assert!(!a.body_hex.is_empty());
         assert!(a.heuristics.iter().any(|h| h.interpretation.contains("half-°C") || h.interpretation.contains("RH")));
         let text = uart_binary_export_text(Some("DHUM_056905_WW"), Some("fromDevice"), "00", &a);
-        assert!(text.contains("UartBinary"));
-        assert!(text.contains("kind: 0xa8"));
-        assert!(text.contains("Hex dump"));
+        assert!(text.contains("UART binary"));
+        assert!(text.contains("kind=0xa8") || text.contains("0xa8"));
+        assert!(text.contains("body:"));
+        assert!(!text.to_lowercase().contains("please help"));
     }
 }
