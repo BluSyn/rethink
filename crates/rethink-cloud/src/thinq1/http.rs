@@ -23,6 +23,7 @@ pub fn device_metadata_store() -> MetaStore {
 
 #[derive(Clone)]
 pub struct T1HttpState {
+    #[allow(dead_code)] // kept for handlers that need advertise host / ports
     pub config: Arc<Config>,
     pub meta: MetaStore,
 }

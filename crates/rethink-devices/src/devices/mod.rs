@@ -3,6 +3,11 @@
 //! To add a new device:
 //! 1. Create a module here implementing `DeviceHandler`
 //! 2. Register the modelId in `crate::registry`
+//!
+//! Module names intentionally track LG `modelId` strings (double underscores, etc.),
+//! which are not always strict Rust snake_case.
+
+#![allow(non_snake_case)]
 
 pub mod washer_ctrl;
 

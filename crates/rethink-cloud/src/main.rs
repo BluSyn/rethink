@@ -12,7 +12,7 @@ mod thinq2;
 
 use anyhow::{Context, Result};
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::Json;
 use rethink_bridge::{Bridge, JsonStorage};
 use rethink_core::config::load_config;
 use rethink_core::ha::HaMqttSink;

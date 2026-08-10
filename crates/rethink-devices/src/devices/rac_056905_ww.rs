@@ -2,7 +2,6 @@
 
 use crate::ac_tables::{rac_air_temp, rac_pipe_temp};
 use crate::device_trait::DeviceHandler;
-use chrono::Datelike;
 use parking_lot::Mutex;
 use rethink_core::device_base::{default_config, FieldDefinition, TlvDeviceCore};
 use rethink_core::ha::{DeviceDiscovery, HaConnection, PropertyValue};

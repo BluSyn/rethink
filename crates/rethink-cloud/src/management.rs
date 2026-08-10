@@ -488,7 +488,14 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
 
 async fn api_decode(Json(body): Json<DecodeBody>) -> Response {
     match decode_hex_payload(&body.hex, body.direction.as_deref()) {
-        Ok(v) => Json(v).into_response(),
+        Ok(mut v) => {
+            if let Some(m) = body.model_id {
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("modelId".into(), json!(m));
+                }
+            }
+            Json(v).into_response()
+        }
         Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": e}))).into_response(),
     }
 }

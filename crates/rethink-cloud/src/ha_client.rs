@@ -1,7 +1,6 @@
 //! Real Home Assistant MQTT client via rumqttc, wired to HaMqttSink.
 
 use anyhow::{Context, Result};
-use rethink_core::config::HaConfig;
 use rethink_core::ha::HaMqttSink;
 use rumqttc::{AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS};
 use std::sync::Arc;

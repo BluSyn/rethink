@@ -77,10 +77,12 @@ impl Subscription {
 type ClientId = u64;
 
 struct ClientInner {
+    #[allow(dead_code)] // retained for logging / future broker introspection
     id: ClientId,
     subscriptions: HashMap<String, Subscription>,
     will: Option<Will>,
     tx: mpsc::UnboundedSender<Vec<u8>>,
+    #[allow(dead_code)] // set when ThinQ device object is bound on this client
     device_obj: bool,
 }
 
@@ -136,6 +138,7 @@ impl Broker {
         self.state.lock().on_publish = Some(h);
     }
 
+    #[allow(dead_code)] // optional hook for ThinQ acceptor wiring
     pub fn on_connect(&self, h: ConnectHandler) {
         self.state.lock().on_connect = Some(h);
     }

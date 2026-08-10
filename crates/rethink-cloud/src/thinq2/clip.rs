@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// CLIP JSON envelope (device ↔ cloud). Kept for typed parsing / docs.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipMessage {
     pub mid: Option<i64>,

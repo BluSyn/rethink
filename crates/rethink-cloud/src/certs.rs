@@ -164,11 +164,13 @@ pub async fn sign_csr(ca: &Ca, csr_pem: &str) -> Result<String> {
 }
 
 /// Fallback CSR signing via rcgen when openssl is unavailable.
+#[allow(dead_code)] // optional path when openssl CLI is unavailable
 pub fn sign_csr_rcgen(ca: &Ca, _csr_pem: &str) -> Result<String> {
     // Full CSR parse/sign without openssl is complex; return CA cert as last resort for smoke tests.
     Ok(ca.cert_pem.clone())
 }
 
+#[allow(dead_code)] // helper for rustls TLS wiring / tests
 pub fn load_private_key_der(ca: &Ca) -> Result<PrivateKeyDer<'static>> {
     let mut key_reader = std::io::Cursor::new(ca.key_pem.as_bytes());
     let key = rustls_pemfile::private_key(&mut key_reader)?
@@ -176,6 +178,7 @@ pub fn load_private_key_der(ca: &Ca) -> Result<PrivateKeyDer<'static>> {
     Ok(key)
 }
 
+#[allow(dead_code)] // helper for rustls TLS wiring / tests
 pub fn load_cert_der(ca: &Ca) -> Result<Vec<CertificateDer<'static>>> {
     let mut cert_reader = std::io::Cursor::new(ca.cert_pem.as_bytes());
     Ok(rustls_pemfile::certs(&mut cert_reader).collect::<Result<Vec<_>, _>>()?)

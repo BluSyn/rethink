@@ -107,6 +107,7 @@ impl HaBridge {
         self.ha_devices.lock().contains_key(id)
     }
 
+    #[allow(dead_code)] // handy for diagnostics / management extensions
     pub fn devices_snapshot(&self) -> Vec<String> {
         self.ha_devices.lock().keys().cloned().collect()
     }

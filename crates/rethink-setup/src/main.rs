@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
-use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::TlsConnector;
 
 const PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----
@@ -50,7 +50,6 @@ fn b64(s: &str) -> String {
 }
 
 async fn connect_tls(host: &str, port: u16) -> Result<tokio_rustls::client::TlsStream<TcpStream>> {
-    let mut roots = RootCertStore::empty();
     // SoftAP uses a self-signed device cert — disable verification via custom verifier.
     let config = ClientConfig::builder()
         .dangerous()
@@ -63,7 +62,6 @@ async fn connect_tls(host: &str, port: u16) -> Result<tokio_rustls::client::TlsS
     let server_name = rustls::pki_types::ServerName::try_from(host.to_string())
         .unwrap_or_else(|_| rustls::pki_types::ServerName::try_from("localhost").unwrap());
     let tls = connector.connect(server_name, tcp).await?;
-    let _ = roots;
     Ok(tls)
 }
 

@@ -135,6 +135,7 @@ impl DeviceManager {
         self.on_new.lock().push(Box::new(f));
     }
 
+    #[allow(dead_code)] // extension hook for management/HA cleanup listeners
     pub fn on_drop_device<F: Fn(&str) + Send + Sync + 'static>(&self, f: F) {
         self.on_drop.lock().push(Box::new(f));
     }

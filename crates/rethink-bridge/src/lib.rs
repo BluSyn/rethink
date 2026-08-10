@@ -50,7 +50,11 @@ enum UpstreamHandle {
 }
 
 struct BridgedSession {
+    /// Session key (same as map key); kept for diagnostics / future reconnection logic.
+    #[allow(dead_code)]
     device_id: String,
+    /// Upstream pairing payload retained for the life of the live session.
+    #[allow(dead_code)]
     lg_state: serde_json::Value,
     /// Set true when detaching; forward tasks exit.
     stopped: Arc<AtomicBool>,
