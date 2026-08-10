@@ -571,9 +571,12 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
                     .collect();
             }
             notes.push(format!(
-                "kind=0x{:02x} len={}",
-                t.frame.kind, t.frame.len
+                "kind=0x{:02x} b5=0x{:02x} b6=0x{:02x} len={}",
+                t.frame.kind, t.frame.byte5, t.frame.byte6, t.frame.len
             ));
+            if t.frame.len == 0 {
+                notes.push("empty body (ACK/keepalive-style)".into());
+            }
         }
         Decoded::Aabb(a) => {
             protocol = "Aabb".into();
@@ -727,9 +730,12 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
         .unwrap_or("");
 
     // Binary UART: prefer structured heuristic export over empty TLV export.
+    // Note: JSON null for binaryAnalysis is still Some(Value::Null) — filter it out.
     if protocol == "UartBinary" {
-        let text = if let Some(ba) = decoded.get("binaryAnalysis") {
-            // Re-run analysis from envelope fields in JSON for stable text formatting
+        let text = if let Some(ba) = decoded
+            .get("binaryAnalysis")
+            .filter(|v| !v.is_null())
+        {
             if let (Some(kind), Some(b5), Some(b6), Some(b7), Some(body_hex)) = (
                 ba.pointer("/envelope/kind").and_then(|v| v.as_u64()),
                 ba.pointer("/envelope/byte5").and_then(|v| v.as_u64()),
@@ -754,13 +760,52 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
                     &analysis,
                 )
             } else {
-                format!(
-                    "# ThinQ UART binary RE export\nprotocol: UartBinary\nhex: {hex}\n\n{}",
-                    serde_json::to_string_pretty(ba).unwrap_or_default()
-                )
+                // Envelope present but incomplete — compact fallback, never dump JSON "null"
+                let notes = decoded
+                    .get("notes")
+                    .and_then(|n| n.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    })
+                    .unwrap_or_default();
+                let mut out = String::from("# ThinQ UART binary\n");
+                if let Some(m) = body.model_id.as_deref() {
+                    out.push_str(&format!("modelId: {m}\n"));
+                }
+                if !notes.is_empty() {
+                    out.push_str(&format!("{notes}\n"));
+                }
+                out.push_str(&format!("hex: {hex}\n"));
+                if let Some(body_h) = decoded.get("aabbBody").and_then(|v| v.as_str()) {
+                    out.push_str(&format!("body: {body_h}\n"));
+                }
+                out
             }
         } else {
-            format!("# ThinQ UART binary RE export\nprotocol: UartBinary\nhex: {hex}\n")
+            // Empty body / no analysis — envelope only from notes
+            let notes = decoded
+                .get("notes")
+                .and_then(|n| n.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .unwrap_or_default();
+            let mut out = String::from("# ThinQ UART binary\n");
+            if let Some(m) = body.model_id.as_deref() {
+                out.push_str(&format!("modelId: {m}\n"));
+            }
+            if !notes.is_empty() {
+                out.push_str(&format!("{notes}\n"));
+            }
+            out.push_str(&format!("hex: {hex}\n"));
+            out.push_str("body: (empty)\n");
+            out
         };
         return Json(json!({
             "ok": true,

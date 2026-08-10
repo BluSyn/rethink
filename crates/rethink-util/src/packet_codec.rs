@@ -214,12 +214,15 @@ pub fn decode_packet(hex_str: &str) -> Decoded {
         };
         let from_device = kind != 0x65;
         let is_standard_tlv_kind = kind == 0x87 || kind == 0xa7 || kind == 0x65;
-        // Values/query path: b5==2 and b6 in {1,2,4} is the climate TLV dialect.
+        // Values/query path: b5 in {1,2} and b6 in {1,2,4} is the climate TLV dialect.
         let looks_like_climate_tlv = is_standard_tlv_kind
             && (buf[7] == 0x01 || buf[7] == 0x02)
             && matches!(buf[8], 0x01 | 0x02 | 0x04);
+        // Empty-body frames on standard kinds (often b6=0x10 ACK) are still TLV envelope —
+        // not binary blobs. Surface as Tlv with empty tag list.
+        let empty_standard_ack = is_standard_tlv_kind && len == 0;
 
-        if looks_like_climate_tlv {
+        if looks_like_climate_tlv || empty_standard_ack {
             let tlv = tlv::parse(body);
             return if from_device {
                 Decoded::Tlv(DecodedTlv {
@@ -316,6 +319,24 @@ mod tests {
             assert_eq!(a.length, 0x16);
         } else {
             panic!("expected aabb");
+        }
+    }
+
+    /// Empty-body fromDevice ACK (kind 0x87, b6=0x10) is TLV envelope, not uart_binary.
+    #[test]
+    fn decode_empty_kind_87_ack_as_tlv() {
+        // 02 01 | 04 00 00 00 | 87 01 10 00 | len=00 | crc
+        let hex = "0201040000008701100000ec3c";
+        let d = decode_packet(hex);
+        assert_eq!(d.protocol(), Protocol::Tlv, "reason-like: {:?}", d);
+        if let Decoded::Tlv(t) = d {
+            assert_eq!(t.frame.kind, 0x87);
+            assert_eq!(t.frame.len, 0);
+            assert_eq!(t.frame.byte6, 0x10);
+            assert!(t.tlv.is_empty());
+            assert!(t.crc_ok);
+        } else {
+            panic!("expected empty Tlv");
         }
     }
 

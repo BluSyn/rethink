@@ -681,6 +681,22 @@ function deviceContextLines() {
     return { id, modelId: model, modelName: '—', platform, deviceType, mapped, bridged }
 }
 
+/** Pull kind/b5/b6/len from decode notes when present. */
+function parseEnvelopeNotes(notes) {
+    const joined = (notes || []).join(' ')
+    const kind = joined.match(/\bkind=0x([0-9a-f]+)\b/i)
+    if (!kind) return null
+    const b5 = joined.match(/\bb5=0x([0-9a-f]+)\b/i)
+    const b6 = joined.match(/\bb6=0x([0-9a-f]+)\b/i)
+    const len = joined.match(/\blen=(\d+)\b/i)
+    return {
+        kind: parseInt(kind[1], 16),
+        b5: b5 ? parseInt(b5[1], 16) : null,
+        b6: b6 ? parseInt(b6[1], 16) : null,
+        len: len ? Number(len[1]) : null,
+    }
+}
+
 /**
  * Compact one-frame block for multi-frame transcripts (no nested full exports).
  * @param {number|string} index 1-based
@@ -700,21 +716,14 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0) {
 
     const head = [`#${index}`, dir.toUpperCase(), direction, rel || iso].filter(Boolean).join(' ')
     lines.push(`### ${head}`)
-    if (kind === 'hex' && decoded.decode) {
-        const p = decoded.decode.protocol || '?'
-        const crc = decoded.decode.crcOk != null ? ` crc=${decoded.decode.crcOk}` : ''
-        const notes = (decoded.decode.notes || []).join('; ')
-        lines.push(`protocol=${p}${crc}${notes ? ' · ' + notes : ''}`)
-    } else if (kind === 'clip') {
-        lines.push('protocol=CLIP')
-    }
-    lines.push(`hex: ${hex}`)
 
     if (kind === 'clip') {
+        lines.push('protocol=CLIP')
+        lines.push(`payload: ${payload}`)
         try {
             lines.push(JSON.stringify(JSON.parse(payload)))
         } catch {
-            lines.push(payload)
+            /* payload already printed */
         }
         lines.push('')
         return lines
@@ -722,22 +731,54 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0) {
 
     if (kind === 'hex' && decoded.decode) {
         const dec = decoded.decode
-        if (dec.protocol === 'UartBinary') {
-            // Prefer compact server text if present, else body only
-            if (decoded.text) {
-                // strip leading # title lines already covered
-                const body = decoded.text
-                    .split('\n')
-                    .filter((l) => !l.startsWith('# ') && !l.startsWith('modelId:') && !l.startsWith('direction:'))
-                    .join('\n')
-                    .trim()
-                if (body) lines.push(body)
-            } else if (dec.aabbBody) {
-                lines.push(`body: ${dec.aabbBody}`)
-            }
+        const p = dec.protocol || '?'
+        const crc = dec.crcOk != null ? ` crc=${dec.crcOk}` : ''
+        const env = parseEnvelopeNotes(dec.notes)
+        const ba = dec.binaryAnalysis && typeof dec.binaryAnalysis === 'object' ? dec.binaryAnalysis : null
+        const baEnv = ba && ba.envelope ? ba.envelope : null
+
+        if (p === 'UartBinary') {
+            const k = baEnv ? baEnv.kind : env && env.kind
+            const b5 = baEnv ? baEnv.byte5 : env && env.b5
+            const b6 = baEnv ? baEnv.byte6 : env && env.b6
+            const blen =
+                ba && ba.body_len != null
+                    ? ba.body_len
+                    : env && env.len != null
+                      ? env.len
+                      : dec.aabbBody
+                        ? Math.floor(String(dec.aabbBody).length / 2)
+                        : 0
+            const parts = [`protocol=UartBinary${crc}`]
+            if (k != null) parts.push(`kind=0x${Number(k).toString(16).padStart(2, '0')}`)
+            if (b5 != null) parts.push(`b5=0x${Number(b5).toString(16).padStart(2, '0')}`)
+            if (b6 != null) parts.push(`b6=0x${Number(b6).toString(16).padStart(2, '0')}`)
+            parts.push(`body_len=${blen}`)
+            lines.push(parts.join(' '))
+            lines.push(`hex: ${hex}`)
+            const bodyHex = dec.aabbBody || (ba && ba.body_hex) || ''
+            if (bodyHex) lines.push(`body: ${bodyHex}`)
+            else lines.push('body: (empty)')
             lines.push('')
             return lines
         }
+
+        // TLV / other
+        const meta = [`protocol=${p}${crc}`]
+        if (env) {
+            meta.push(`kind=0x${env.kind.toString(16).padStart(2, '0')}`)
+            if (env.b5 != null) meta.push(`b5=0x${env.b5.toString(16).padStart(2, '0')}`)
+            if (env.b6 != null) meta.push(`b6=0x${env.b6.toString(16).padStart(2, '0')}`)
+            meta.push(`len=${env.len}`)
+        } else {
+            const noteBits = (dec.notes || []).filter(
+                (n) => !String(n).startsWith('packet_codec:') && !String(n).startsWith('binary body'),
+            )
+            if (noteBits.length) meta.push(noteBits.join(' · '))
+        }
+        lines.push(meta.join(' '))
+        lines.push(`hex: ${hex}`)
+
         const els = dec.elements || []
         if (!els.length) {
             if (dec.aabbBody) lines.push(`body: ${dec.aabbBody}`)
@@ -748,11 +789,10 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0) {
                 if (e.known) return `${hx}:${e.name || '?'}=${e.v}`
                 return `${hx}:UNKNOWN=${e.v}`
             })
-            // Keep multi-line if many tags, single line if few
             if (parts.length <= 8) lines.push(`tags: ${parts.join(' ')}`)
             else {
                 lines.push('tags:')
-                for (const p of parts) lines.push(`  ${p}`)
+                for (const p2 of parts) lines.push(`  ${p2}`)
             }
         }
         lines.push('')
@@ -760,8 +800,48 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0) {
     }
 
     lines.push('(undecoded)')
+    lines.push(`hex: ${hex}`)
     lines.push('')
     return lines
+}
+
+/** UART kind from a silent decode result, or null. */
+function frameUartKind(decoded) {
+    if (!decoded || decoded.kind !== 'hex' || !decoded.decode) return null
+    const env = parseEnvelopeNotes(decoded.decode.notes)
+    if (env) return env.kind
+    const ba = decoded.decode.binaryAnalysis
+    if (ba && ba.envelope && ba.envelope.kind != null) return Number(ba.envelope.kind)
+    return null
+}
+
+/**
+ * True when two TLV frames are worth a delta (same dialect / overlapping tags).
+ * Avoids caps↔values noise when first/last are different message types.
+ */
+function framesComparableForDelta(a, b) {
+    if (!a || !b || a.kind !== 'hex' || b.kind !== 'hex') return false
+    const da = a.decode
+    const db = b.decode
+    if (!da || !db) return false
+    if (da.protocol === 'UartBinary' || db.protocol === 'UartBinary') return false
+    if (da.protocol !== 'Tlv' && da.protocol !== 'TlvRaw') return false
+    if (db.protocol !== 'Tlv' && db.protocol !== 'TlvRaw') return false
+    const elsA = da.elements || []
+    const elsB = db.elements || []
+    // Empty ACK vs full values — not comparable
+    if (!elsA.length || !elsB.length) return false
+    const kindA = frameUartKind(a)
+    const kindB = frameUartKind(b)
+    if (kindA != null && kindB != null && kindA !== kindB) return false
+    const setA = new Set(elsA.map((e) => e.t))
+    const setB = new Set(elsB.map((e) => e.t))
+    let inter = 0
+    for (const t of setA) if (setB.has(t)) inter++
+    const union = setA.size + setB.size - inter
+    if (union === 0) return false
+    // Require meaningful overlap (same message family), not caps vs values
+    return inter / union >= 0.25 || inter >= 8
 }
 
 function tlvDeltaSummary(mapA, mapB) {
@@ -839,26 +919,35 @@ async function runMultiFrameBreakdown(ordered) {
             lines.push(...formatFrameCompact(i + 1, d, payload, dir, ts, t0))
         })
 
-        // Compact first↔last TLV delta when both are TLV-like
-        const first = decodedList[0]
+        // TLV delta only when first/last are same message family (not caps↔values).
+        // Prefer last two comparable TLV frames in the selection when first≠last type.
+        let deltaA = null
+        let deltaB = null
         const lastD = decodedList[decodedList.length - 1]
-        if (
-            first.kind === 'hex' &&
-            lastD.kind === 'hex' &&
-            first.decode &&
-            lastD.decode &&
-            first.decode.elements &&
-            lastD.decode.elements &&
-            first.decode.protocol !== 'UartBinary' &&
-            lastD.decode.protocol !== 'UartBinary'
-        ) {
-            const mapA = tagMapFromDecode(first.decode)
-            const mapB = tagMapFromDecode(lastD.decode)
+        if (framesComparableForDelta(decodedList[0], lastD)) {
+            deltaA = decodedList[0]
+            deltaB = lastD
+        } else {
+            for (let i = decodedList.length - 1; i >= 0; i--) {
+                for (let j = i - 1; j >= 0; j--) {
+                    if (framesComparableForDelta(decodedList[j], decodedList[i])) {
+                        deltaA = decodedList[j]
+                        deltaB = decodedList[i]
+                        break
+                    }
+                }
+                if (deltaA) break
+            }
+        }
+
+        if (deltaA && deltaB) {
+            const mapA = tagMapFromDecode(deltaA.decode)
+            const mapB = tagMapFromDecode(deltaB.decode)
             const { appeared, disappeared, changed } = tlvDeltaSummary(mapA, mapB)
-            lines.push('## First→last TLV delta')
-            lines.push(
-                `protocols: ${first.decode.protocol} → ${lastD.decode.protocol} · * = unknown tag`,
-            )
+            const idxA = decodedList.indexOf(deltaA) + 1
+            const idxB = decodedList.indexOf(deltaB) + 1
+            lines.push(`## TLV delta #${idxA}→#${idxB}`)
+            lines.push(`* = unknown tag`)
             if (!appeared.length && !disappeared.length && !changed.length) {
                 lines.push('(no tag changes)')
             } else {
@@ -867,11 +956,11 @@ async function runMultiFrameBreakdown(ordered) {
                 if (changed.length) lines.push(`~ ${changed.join(' · ')}`)
             }
 
-            // Tag table annotations for last frame
+            // Tag table annotations for last frame in delta pair
             const body = get('tlv_body')
-            if (body && lastD.decode.elements) {
+            if (body && deltaB.decode.elements) {
                 body.innerHTML = ''
-                for (const el of lastD.decode.elements) {
+                for (const el of deltaB.decode.elements) {
                     const tr = document.createElement('tr')
                     const prev = mapA.get(el.t)
                     let delta = ''
@@ -898,7 +987,7 @@ async function runMultiFrameBreakdown(ordered) {
             }
             get('decode_summary').innerHTML = `sequence ${ordered.length} · span <b>${
                 span != null ? span + 'ms' : '?'
-            }</b> · +${appeared.length} −${disappeared.length} ~${changed.length}`
+            }</b> · delta #${idxA}→#${idxB} +${appeared.length} −${disappeared.length} ~${changed.length}`
         } else {
             get('decode_summary').innerHTML = `sequence ${ordered.length} · span <b>${
                 span != null ? span + 'ms' : '?'
