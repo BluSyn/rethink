@@ -13,14 +13,28 @@ impl Tlv {
     }
 }
 
+/// One TLV element with byte range `[byte_start, byte_end)` in the parsed buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TlvSpan {
+    pub tlv: Tlv,
+    pub byte_start: usize,
+    pub byte_end: usize,
+}
+
 /// Parse a TLV sequence. Truncation is tolerated (returns what was successfully parsed).
 pub fn parse(buf: &[u8]) -> Vec<Tlv> {
+    parse_with_spans(buf).into_iter().map(|s| s.tlv).collect()
+}
+
+/// Parse TLV and record each element's byte span within `buf`.
+pub fn parse_with_spans(buf: &[u8]) -> Vec<TlvSpan> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < buf.len() {
         if i + 2 > buf.len() {
             return out;
         }
+        let start = i;
         let t = ((u16::from(buf[i]) << 2) + u16::from(buf[i + 1] >> 6)) as u16;
         let l = (buf[i + 1] >> 4) & 3;
         let mut v = u32::from(buf[i + 1] & 15);
@@ -35,12 +49,17 @@ pub fn parse(buf: &[u8]) -> Vec<Tlv> {
                 v = (v << 8) | u32::from(buf[i + 2 + j]);
             }
         }
-        out.push(Tlv {
-            t,
-            l: Some(l),
-            v,
+        let end = i + 2 + l as usize;
+        out.push(TlvSpan {
+            tlv: Tlv {
+                t,
+                l: Some(l),
+                v,
+            },
+            byte_start: start,
+            byte_end: end,
         });
-        i += 2 + l as usize;
+        i = end;
     }
     out
 }
@@ -116,6 +135,18 @@ mod tests {
             assert_eq!(parsed[0].t, c.tlv.t, "parse t {}", c.name);
             assert_eq!(parsed[0].v, c.tlv.v, "parse v {}", c.name);
         }
+    }
+
+    #[test]
+    fn parse_with_spans_covers_full_buffer() {
+        let bytes = build(&[Tlv::new(0x1f7, 1), Tlv::new(0x1fa, 6)]);
+        let spans = parse_with_spans(&bytes);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].byte_start, 0);
+        assert_eq!(spans[0].byte_end, spans[1].byte_start);
+        assert_eq!(spans[1].byte_end, bytes.len());
+        assert_eq!(spans[0].tlv.t, 0x1f7);
+        assert_eq!(spans[1].tlv.v, 6);
     }
 
     #[test]

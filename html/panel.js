@@ -28,7 +28,12 @@ let reconnectTimer
 let deviceReconnectTimer
 let bridge_status = false
 let selectedDeviceId = null
-let selectedFrameEl = null
+/** @type {HTMLElement[]} ordered multi-selection (A, B, …) */
+let selectedFrames = []
+/** Anchor for shift+click range */
+let frameSelectAnchor = null
+/** Last decode result (for spans / hover) */
+let lastDecode = null
 
 const devices = {}
 const baseUrl = new URL(window.location)
@@ -354,7 +359,10 @@ function setInjectEnabled(on) {
 
 function clearFrames() {
     get('messages').innerHTML = ''
-    selectedFrameEl = null
+    selectedFrames = []
+    frameSelectAnchor = null
+    updateDiffBanner()
+    clearPayloadHighlight()
 }
 
 get('btn_clear_frames')?.addEventListener('click', clearFrames)
@@ -362,10 +370,17 @@ get('btn_clear_frames')?.addEventListener('click', clearFrames)
 function formatTs(ts) {
     if (ts) {
         try {
-            return new Date(ts).toLocaleTimeString()
+            return new Date(Number(ts) || ts).toLocaleTimeString()
         } catch (_) {}
     }
     return new Date().toLocaleTimeString()
+}
+
+function parseTsMs(el) {
+    const t = el && el.dataset.ts
+    if (!t) return null
+    const n = Number(t)
+    return Number.isFinite(n) ? n : null
 }
 
 /** CLIP JSON from rethink handlers (setMaskingInfo, etc.) — not UART TLV hex. */
@@ -402,16 +417,18 @@ function pushFrame(dir, payload, injected, ts, fromHistory) {
     const div = document.createElement('div')
     const raw = String(payload)
     const clip = isClipJsonPayload(raw)
+    const tsMs = ts != null ? Number(ts) : Date.now()
     div.className = `frame ${dir}${clip ? ' clip' : ''}${injected ? ' injected' : ''}`
     div.dataset.payload = raw
     div.dataset.dir = dir
     div.dataset.kind = clip ? 'clip' : 'hex'
+    div.dataset.ts = String(tsMs)
     const label = clip ? clipSummary(raw) : raw
     const show = label.length > 200 ? label.slice(0, 200) + '…' : label
-    div.innerHTML = `<span class="ts">${escapeHtml(formatTs(ts))}</span><span class="dir">${
+    div.innerHTML = `<span class="ts">${escapeHtml(formatTs(tsMs))}</span><span class="dir">${
         clip ? 'clip' : dir
     }</span>${escapeHtml(show)}`
-    div.onclick = () => loadFrameIntoDecoder(div)
+    div.addEventListener('click', (ev) => onFrameClick(ev, div))
     messages.appendChild(div)
     if (!fromHistory && get('autoscroll').checked) {
         messages.scrollTop = messages.scrollHeight
@@ -419,16 +436,86 @@ function pushFrame(dir, payload, injected, ts, fromHistory) {
     return div
 }
 
-function loadFrameIntoDecoder(el) {
-    if (selectedFrameEl) selectedFrameEl.classList.remove('selected')
-    selectedFrameEl = el
-    el.classList.add('selected')
+function allFrameEls() {
+    return Array.from(get('messages').querySelectorAll('.frame'))
+}
 
+function paintFrameSelection() {
+    allFrameEls().forEach((el) => {
+        el.classList.remove('selected', 'selected-a', 'selected-b')
+    })
+    selectedFrames.forEach((el, i) => {
+        el.classList.add('selected')
+        if (selectedFrames.length >= 2) {
+            if (i === 0) el.classList.add('selected-a')
+            else if (i === selectedFrames.length - 1) el.classList.add('selected-b')
+        }
+    })
+    updateDiffBanner()
+}
+
+function updateDiffBanner() {
+    const b = get('diff_banner')
+    if (!b) return
+    if (selectedFrames.length === 0) {
+        b.textContent = ''
+    } else if (selectedFrames.length === 1) {
+        b.textContent = '1 frame selected · Ctrl/⌘+click another for delta · Shift+click for range'
+    } else {
+        const a = selectedFrames[0]
+        const z = selectedFrames[selectedFrames.length - 1]
+        const ta = parseTsMs(a)
+        const tb = parseTsMs(z)
+        const dt = ta != null && tb != null ? Math.abs(tb - ta) : null
+        b.textContent = `${selectedFrames.length} frames · A↔B Δt=${
+            dt != null ? dt + ' ms' : '?'
+        } · showing delta of first & last`
+    }
+}
+
+function onFrameClick(ev, el) {
+    ev.preventDefault()
+    const multi = ev.ctrlKey || ev.metaKey
+    const range = ev.shiftKey
+    const frames = allFrameEls()
+
+    if (range && frameSelectAnchor) {
+        const i0 = frames.indexOf(frameSelectAnchor)
+        const i1 = frames.indexOf(el)
+        if (i0 >= 0 && i1 >= 0) {
+            const lo = Math.min(i0, i1)
+            const hi = Math.max(i0, i1)
+            selectedFrames = frames.slice(lo, hi + 1)
+        } else {
+            selectedFrames = [el]
+            frameSelectAnchor = el
+        }
+    } else if (multi) {
+        const idx = selectedFrames.indexOf(el)
+        if (idx >= 0) selectedFrames.splice(idx, 1)
+        else selectedFrames.push(el)
+        frameSelectAnchor = el
+    } else {
+        selectedFrames = [el]
+        frameSelectAnchor = el
+    }
+
+    paintFrameSelection()
+
+    if (selectedFrames.length >= 2) {
+        runFrameDelta(selectedFrames[0], selectedFrames[selectedFrames.length - 1])
+    } else if (selectedFrames.length === 1) {
+        loadFrameIntoDecoder(selectedFrames[0])
+    }
+}
+
+function loadFrameIntoDecoder(el) {
     const payload = el.dataset.payload || ''
     const dir = el.dataset.dir || 'rx'
     const kind = el.dataset.kind || 'hex'
 
     get('decode_hex').value = payload
+    renderPayloadView(payload, null)
     get('decode_direction').value = dir === 'tx' ? 'toDevice' : 'fromDevice'
     get('decode_source').textContent =
         kind === 'clip' ? `CLIP JSON · ${dir}` : `${dir} · ${payload.length} hex chars`
@@ -443,26 +530,258 @@ function loadFrameIntoDecoder(el) {
 }
 
 function renderClipBreakdown(payload) {
+    lastDecode = null
     let pretty = payload
     let cmd = '?'
-    let body = null
     try {
-        body = JSON.parse(payload)
+        const body = JSON.parse(payload)
         pretty = JSON.stringify(body, null, 2)
         cmd = body.cmd || '?'
     } catch (_) {}
 
     get('tlv_body').innerHTML = `<tr><td colspan="4" class="empty-state">
-        Not a UART/TLV frame — ThinQ2 <b>CLIP</b> command from rethink (device handler → cloud MQTT),
-        e.g. setMaskingInfo after values arrive. Not Home Assistant.
+        Not a UART/TLV frame — ThinQ2 <b>CLIP</b> command from rethink (device handler → cloud MQTT).
     </td></tr>`
     get('decode_summary').innerHTML =
         `kind=<b>CLIP</b> · cmd=<b>${escapeHtml(String(cmd))}</b> · skip TLV decode`
     get('text_breakdown').value =
         `# ThinQ CLIP command (not TLV)\n` +
-        `Source: rethink device handler → MQTT CLIP (cmd/type/data)\n` +
-        `Not from Home Assistant discovery; not an AABB/TLV wire frame.\n\n` +
+        `Source: rethink device handler → MQTT CLIP (cmd/type/data)\n\n` +
         pretty
+    renderPayloadView(payload, null)
+}
+
+// ── Payload hex view + tag hover highlight ────────────────────────────────
+
+function clearPayloadHighlight() {
+    const view = get('payload_view')
+    if (!view) return
+    view.querySelectorAll('.hex-byte.hl').forEach((n) => n.classList.remove('hl'))
+}
+
+function renderPayloadView(hexStr, highlightRange) {
+    const view = get('payload_view')
+    if (!view) return
+    const hex = String(hexStr || '')
+        .replace(/[^0-9a-fA-F]/g, '')
+        .toLowerCase()
+    if (!hex) {
+        view.innerHTML = '<span class="empty-state">Select a frame…</span>'
+        return
+    }
+    // Pair into bytes
+    const parts = []
+    for (let i = 0; i < hex.length; i += 2) {
+        const byteIndex = i / 2
+        const pair = hex.slice(i, i + 2)
+        let cls = 'hex-byte'
+        if (
+            highlightRange &&
+            byteIndex >= highlightRange[0] &&
+            byteIndex < highlightRange[1]
+        ) {
+            cls += ' hl'
+        }
+        parts.push(`<span class="${cls}" data-bi="${byteIndex}">${pair}</span>`)
+    }
+    view.innerHTML = parts.join('')
+}
+
+function highlightPayloadBytes(byteStart, byteEnd) {
+    const view = get('payload_view')
+    if (!view) return
+    view.querySelectorAll('.hex-byte').forEach((n) => {
+        const bi = Number(n.dataset.bi)
+        n.classList.toggle('hl', bi >= byteStart && bi < byteEnd)
+    })
+}
+
+// ── Multi-frame delta ─────────────────────────────────────────────────────
+
+async function decodePayloadSilent(payload, dir) {
+    if (isClipJsonPayload(payload)) {
+        return { kind: 'clip', payload, dir }
+    }
+    const direction = dir === 'tx' ? 'toDevice' : 'fromDevice'
+    const model_id = get('decode_model').value || undefined
+    const res = await fetch(`${baseUrl}api/re/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hex: payload, direction, model_id }),
+    })
+    const data = await res.json()
+    if (!data.ok) throw new Error(data.error || 'decode failed')
+    return { kind: 'hex', dir, decode: data.decode, text: data.text }
+}
+
+function tagMapFromDecode(dec) {
+    const map = new Map()
+    const els = (dec && dec.elements) || []
+    for (const e of els) {
+        map.set(e.t, e)
+    }
+    return map
+}
+
+async function runFrameDelta(elA, elB) {
+    const payloadA = elA.dataset.payload || ''
+    const payloadB = elB.dataset.payload || ''
+    const dirA = elA.dataset.dir || 'rx'
+    const dirB = elB.dataset.dir || 'rx'
+    const tsA = parseTsMs(elA)
+    const tsB = parseTsMs(elB)
+    const dt = tsA != null && tsB != null ? Math.abs(tsB - tsA) : null
+
+    get('decode_hex').value = payloadB
+    get('decode_direction').value = dirB === 'tx' ? 'toDevice' : 'fromDevice'
+    get('decode_source').textContent = `Δ A→B · ${dt != null ? dt + ' ms' : 'Δt ?'}`
+
+    try {
+        const [a, b] = await Promise.all([
+            decodePayloadSilent(payloadA, dirA),
+            decodePayloadSilent(payloadB, dirB),
+        ])
+
+        // Show B in the table/view as the "current" frame
+        if (b.kind === 'clip') {
+            renderClipBreakdown(payloadB)
+        } else if (b.decode) {
+            renderDecode(b.decode)
+            lastDecode = b.decode
+            renderPayloadView(b.decode.hex || payloadB, null)
+        }
+
+        const lines = []
+        lines.push('# Frame delta (rethink management)')
+        lines.push(`time_delta_ms: ${dt != null ? dt : 'unknown'}`)
+        lines.push(
+            `A: ts=${tsA != null ? new Date(tsA).toISOString() : '?'} dir=${dirA} kind=${a.kind}`,
+        )
+        lines.push(
+            `B: ts=${tsB != null ? new Date(tsB).toISOString() : '?'} dir=${dirB} kind=${b.kind}`,
+        )
+        lines.push('')
+
+        if (a.kind === 'clip' || b.kind === 'clip') {
+            lines.push('## Note')
+            lines.push('One or both frames are CLIP JSON (rethink→device control), not TLV.')
+            lines.push('')
+            lines.push('### A')
+            lines.push(a.kind === 'clip' ? payloadA : a.text || JSON.stringify(a.decode, null, 2))
+            lines.push('')
+            lines.push('### B')
+            lines.push(b.kind === 'clip' ? payloadB : b.text || JSON.stringify(b.decode, null, 2))
+            get('text_breakdown').value = lines.join('\n')
+            get('decode_summary').innerHTML = `delta · CLIP involved · Δt=<b>${
+                dt != null ? dt + 'ms' : '?'
+            }</b>`
+            return
+        }
+
+        const mapA = tagMapFromDecode(a.decode)
+        const mapB = tagMapFromDecode(b.decode)
+        const allTags = new Set([...mapA.keys(), ...mapB.keys()])
+        const appeared = []
+        const disappeared = []
+        const changed = []
+        const same = []
+        const unkChanged = []
+
+        for (const t of [...allTags].sort((x, y) => x - y)) {
+            const ea = mapA.get(t)
+            const eb = mapB.get(t)
+            const name = (eb && eb.name) || (ea && ea.name) || null
+            const label = `0x${t.toString(16)} (${name || '?'})`
+            if (!ea && eb) {
+                appeared.push({ t, eb, label })
+                if (!eb.known) unkChanged.push(`+ ${label} = ${eb.v}`)
+            } else if (ea && !eb) {
+                disappeared.push({ t, ea, label })
+                if (!ea.known) unkChanged.push(`- ${label} was ${ea.v}`)
+            } else if (ea && eb && ea.v !== eb.v) {
+                changed.push({ t, ea, eb, label })
+                if (!eb.known || !ea.known) unkChanged.push(`~ ${label}: ${ea.v} → ${eb.v}`)
+            } else if (ea && eb) {
+                same.push({ t, ea, label })
+            }
+        }
+
+        lines.push(`protocol A=${a.decode.protocol} B=${b.decode.protocol}`)
+        lines.push('')
+        lines.push('## Appeared in B (not in A)')
+        if (!appeared.length) lines.push('(none)')
+        else
+            appeared.forEach(({ label, eb }) =>
+                lines.push(
+                    `- ${label} = ${eb.v} ${eb.known ? '[known]' : '**UNKNOWN**'}`,
+                ),
+            )
+        lines.push('')
+        lines.push('## Disappeared (in A, not B)')
+        if (!disappeared.length) lines.push('(none)')
+        else
+            disappeared.forEach(({ label, ea }) =>
+                lines.push(
+                    `- ${label} was ${ea.v} ${ea.known ? '[known]' : '**UNKNOWN**'}`,
+                ),
+            )
+        lines.push('')
+        lines.push('## Changed values')
+        if (!changed.length) lines.push('(none)')
+        else
+            changed.forEach(({ label, ea, eb }) =>
+                lines.push(
+                    `- ${label}: ${ea.v} → ${eb.v} ${
+                        eb.known && ea.known ? '[known]' : '**UNKNOWN involved**'
+                    }`,
+                ),
+            )
+        lines.push('')
+        lines.push('## Unchanged tags')
+        lines.push(`(${same.length} tags)`)
+        lines.push('')
+        lines.push('## Unknown-tag focus (appeared / disappeared / changed)')
+        if (!unkChanged.length) lines.push('(none — all delta tags are catalogued)')
+        else unkChanged.forEach((s) => lines.push(s))
+        lines.push('')
+        lines.push('## Hint for RE')
+        lines.push(
+            `If Δt is small and a single unknown tag changed, it likely encodes the action between the two samples.`,
+        )
+
+        get('text_breakdown').value = lines.join('\n')
+        get('decode_summary').innerHTML = `delta A→B · Δt=<b>${
+            dt != null ? dt + 'ms' : '?'
+        }</b> · +${appeared.length} −${disappeared.length} ~${changed.length} · unkΔ=${
+            unkChanged.length
+        }`
+
+        // Tag table shows B's tags, with delta annotation in name column via data attrs
+        const body = get('tlv_body')
+        body.innerHTML = ''
+        const els = (b.decode && b.decode.elements) || []
+        for (const el of els) {
+            const tr = document.createElement('tr')
+            const prev = mapA.get(el.t)
+            let delta = ''
+            if (!prev) delta = ' <span style="color:var(--ok)">(+new)</span>'
+            else if (prev.v !== el.v)
+                delta = ` <span style="color:var(--warn)">(${prev.v}→${el.v})</span>`
+            const status = el.known ? 'known' : 'unknown'
+            tr.className = el.hexStart != null || el.byteStart != null ? 'has-span' : ''
+            tr.dataset.byteStart = el.byteStart != null ? el.byteStart : ''
+            tr.dataset.byteEnd = el.byteEnd != null ? el.byteEnd : ''
+            tr.innerHTML = `
+                <td class="${status}"><code>${escapeHtml(el.hex || '0x' + Number(el.t).toString(16))}</code></td>
+                <td>${escapeHtml(el.name || '—')}${delta}</td>
+                <td><code>${escapeHtml(String(el.v))}</code></td>
+                <td class="${status}">${el.known ? 'known' : 'UNKNOWN'}</td>`
+            attachTagHover(tr)
+            body.appendChild(tr)
+        }
+    } catch (err) {
+        M.toast({ html: `delta error: ${err}` })
+    }
 }
 
 // Inject
@@ -489,7 +808,20 @@ get('btn_send_from').onclick = () => {
 
 // ── Decode + text breakdown ───────────────────────────────────────────────
 
+function attachTagHover(tr) {
+    tr.addEventListener('mouseenter', () => {
+        const b0 = tr.dataset.byteStart
+        const b1 = tr.dataset.byteEnd
+        if (b0 === '' || b1 === '' || b0 == null) return
+        highlightPayloadBytes(Number(b0), Number(b1))
+    })
+    tr.addEventListener('mouseleave', () => {
+        clearPayloadHighlight()
+    })
+}
+
 function renderDecode(data) {
+    lastDecode = data
     const body = get('tlv_body')
     body.innerHTML = ''
     const els = data.elements || []
@@ -501,11 +833,18 @@ function renderDecode(data) {
         for (const el of els) {
             const tr = document.createElement('tr')
             const status = el.known ? 'known' : 'unknown'
+            const hasSpan = el.byteEnd != null && el.byteEnd > (el.byteStart || 0)
+            tr.className = hasSpan ? 'has-span' : ''
+            if (hasSpan) {
+                tr.dataset.byteStart = String(el.byteStart)
+                tr.dataset.byteEnd = String(el.byteEnd)
+            }
             tr.innerHTML = `
                 <td class="${status}"><code>${escapeHtml(el.hex || '0x' + Number(el.t).toString(16))}</code></td>
                 <td>${escapeHtml(el.name || '—')}</td>
                 <td><code>${escapeHtml(String(el.v))}</code></td>
                 <td class="${status}">${el.known ? 'known' : 'UNKNOWN'}</td>`
+            if (hasSpan) attachTagHover(tr)
             body.appendChild(tr)
         }
     }
@@ -516,9 +855,11 @@ function renderDecode(data) {
     )} · unknowns=<b style="color:${unk ? 'var(--unknown)' : 'var(--ok)'}">${unk}</b>${
         data.crcOk == null ? '' : ' · crcOk=' + data.crcOk
     }${(data.notes || []).length ? ' · ' + escapeHtml(data.notes.join('; ')) : ''}`
+
+    renderPayloadView(data.hex || get('decode_hex').value, null)
 }
 
-/** Decode TLV/AABB and always refresh the text breakdown (was "LLM export"). */
+/** Decode TLV/AABB and always refresh the text breakdown. */
 async function runDecode() {
     const hex = get('decode_hex').value.trim()
     if (!hex) {
@@ -532,7 +873,6 @@ async function runDecode() {
     const direction = get('decode_direction').value
     const model_id = get('decode_model').value || undefined
     try {
-        // Prefer /api/re/export — includes decode + full text breakdown in one call
         const res = await fetch(`${baseUrl}api/re/export`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -549,6 +889,11 @@ async function runDecode() {
         M.toast({ html: `decode error: ${err}` })
     }
 }
+
+// Keep payload view in sync when user pastes hex manually
+get('decode_hex')?.addEventListener('input', () => {
+    renderPayloadView(get('decode_hex').value, null)
+})
 
 async function copyExport() {
     const text = get('text_breakdown').value

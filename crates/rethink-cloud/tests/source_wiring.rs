@@ -27,6 +27,9 @@ fn management_exposes_re_and_detail_routes() {
     assert!(panel.contains("selectDevice"));
     assert!(panel.contains("isClipJsonPayload") || panel.contains("renderClipBreakdown"));
     assert!(panel.contains("text_breakdown"));
+    assert!(panel.contains("runFrameDelta") || panel.contains("selectedFrames"));
+    assert!(panel.contains("highlightPayloadBytes") || panel.contains("payload_view"));
+    assert!(mgmt.contains("byteStart") || mgmt.contains("parse_with_spans") || mgmt.contains("hexStart"));
     assert!(mgmt.contains("/frames") || mgmt.contains("api_device_frames") || mgmt.contains("FrameLog"));
 }
 

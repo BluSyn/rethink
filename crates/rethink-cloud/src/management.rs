@@ -530,7 +530,8 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
     };
 
     let mut protocol = String::from("Unknown");
-    let mut tlv_items: Vec<(u16, u32)> = Vec::new();
+    // (t, v, byte_start_in_packet, byte_end_in_packet)
+    let mut tlv_spans: Vec<(u16, u32, usize, usize)> = Vec::new();
     let mut aabb_body: Option<String> = None;
     let mut notes = Vec::new();
     let mut dir_out = requested_dir.to_string();
@@ -544,7 +545,29 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
                 Direction::ToDevice => "toDevice".into(),
             };
             crc_ok = Some(t.crc_ok);
-            tlv_items = t.tlv.iter().map(|e| (e.t, e.v)).collect();
+            // Full UART frame: TLV body starts at byte 11 (after 2 reliability + 9 header).
+            let tlv_base = 11usize;
+            let len = t.frame.len as usize;
+            if bytes.len() >= tlv_base + len {
+                let spans = tlv::parse_with_spans(&bytes[tlv_base..tlv_base + len]);
+                tlv_spans = spans
+                    .into_iter()
+                    .map(|s| {
+                        (
+                            s.tlv.t,
+                            s.tlv.v,
+                            tlv_base + s.byte_start,
+                            tlv_base + s.byte_end,
+                        )
+                    })
+                    .collect();
+            } else {
+                tlv_spans = t
+                    .tlv
+                    .iter()
+                    .map(|e| (e.t, e.v, 0usize, 0usize))
+                    .collect();
+            }
             notes.push(format!(
                 "kind=0x{:02x} len={}",
                 t.frame.kind, t.frame.len
@@ -558,17 +581,27 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
         }
         Decoded::Unknown(u) => {
             notes.push(format!("packet_codec: {}", u.reason));
-            // Raw TLV body (no UART envelope) — common when pasting TLV-only captures
-            let candidates: Vec<&[u8]> = if bytes.len() > 2 {
-                vec![&bytes[..], &bytes[2..]]
+            // Raw TLV body (no UART envelope) — try whole buffer, then after 2-byte prefix
+            let candidates: &[(usize, &[u8])] = if bytes.len() > 2 {
+                &[(0, &bytes[..]), (2, &bytes[2..])]
             } else {
-                vec![&bytes[..]]
+                &[(0, &bytes[..])]
             };
             let mut parsed = false;
-            for c in candidates {
-                let items = tlv::parse(c);
-                if !items.is_empty() {
-                    tlv_items = items.into_iter().map(|t| (t.t, t.v)).collect();
+            for &(base, slice) in candidates {
+                let spans = tlv::parse_with_spans(slice);
+                if !spans.is_empty() {
+                    tlv_spans = spans
+                        .into_iter()
+                        .map(|s| {
+                            (
+                                s.tlv.t,
+                                s.tlv.v,
+                                base + s.byte_start,
+                                base + s.byte_end,
+                            )
+                        })
+                        .collect();
                     protocol = "TlvRaw".into();
                     parsed = true;
                     break;
@@ -581,6 +614,7 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
         }
     }
 
+    let tlv_items: Vec<(u16, u32)> = tlv_spans.iter().map(|(t, v, _, _)| (*t, *v)).collect();
     let classified = classify_tlvs(&tlv_items);
     let unknowns: Vec<Value> = classified
         .iter()
@@ -589,13 +623,19 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
         .collect();
     let elements: Vec<Value> = classified
         .iter()
-        .map(|c| {
+        .zip(tlv_spans.iter())
+        .map(|(c, (_, _, b0, b1))| {
             json!({
                 "t": c.t,
                 "hex": format!("0x{:03x}", c.t),
                 "v": c.v,
                 "known": c.known,
                 "name": c.name,
+                // Byte offsets in the full packet; hex char offsets are 2× (no separators).
+                "byteStart": b0,
+                "byteEnd": b1,
+                "hexStart": b0 * 2,
+                "hexEnd": b1 * 2,
             })
         })
         .collect();
