@@ -10,6 +10,7 @@ pub mod washer_ctrl;
 pub mod dev_2reb1glvb1__2;
 pub mod dev_2ref11ebivpc4;
 pub mod dev_2ref11eida__4;
+pub mod dev_2ref12eii_p_2;
 pub mod dev_2res1ve600fwc;
 pub mod dev_2res1ve61nfa2;
 
@@ -27,11 +28,16 @@ pub mod wtl_fxu_bdv_na_01;
 pub mod y_v8_f___w_b_2qeuk;
 pub mod y_v8_y___w_b32qeuk;
 
-// TLV climate / dehumidifier / pot
+// TLV climate / dehumidifier / humidifier / pot
 pub mod dhum_056905_ww;
+pub mod dhum_231006_ww;
+pub mod hum_056905_ww;
 pub mod pot_056905_ww;
 pub mod rac_056905_ww;
 pub mod win_056905_ww;
+
+// AABB cooking / hood
+pub mod studio_hood;
 
 // ThinQ1
 pub mod wtdn3;

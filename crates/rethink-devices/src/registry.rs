@@ -23,6 +23,7 @@ pub fn t2_factory(model_id: &str) -> Option<T2Factory> {
         "WIN_056905_WW" => Some(devices::win_056905_ww::create),
         "2REF11EIDA__4" => Some(devices::dev_2ref11eida__4::create),
         "2REF11EBIVPC4" => Some(devices::dev_2ref11ebivpc4::create),
+        "2REF12EII_P_2" => Some(devices::dev_2ref12eii_p_2::create),
         "2RES1VE61NFA2" => Some(devices::dev_2res1ve61nfa2::create),
         "2REB1GLVB1__2" => Some(devices::dev_2reb1glvb1__2::create),
         "2RES1VE600FWC" => Some(devices::dev_2res1ve600fwc::create),
@@ -41,6 +42,9 @@ pub fn t2_factory(model_id: &str) -> Option<T2Factory> {
         "RH10V9_CH" => Some(devices::rh10v9_ch::create),
         "WTL_FXU_BDV_NA_01" => Some(devices::wtl_fxu_bdv_na_01::create),
         "DHUM_056905_WW" => Some(devices::dhum_056905_ww::create),
+        "DHUM_231006_WW" => Some(devices::dhum_231006_ww::create),
+        "HUM_056905_WW" => Some(devices::hum_056905_ww::create),
+        "STUDIO_HOOD" => Some(devices::studio_hood::create),
         _ => None,
     }
 }
@@ -64,6 +68,7 @@ pub fn all_t2_model_ids() -> Vec<&'static str> {
         "WIN_056905_WW",
         "2REF11EIDA__4",
         "2REF11EBIVPC4",
+        "2REF12EII_P_2",
         "2RES1VE61NFA2",
         "2REB1GLVB1__2",
         "2RES1VE600FWC",
@@ -83,6 +88,9 @@ pub fn all_t2_model_ids() -> Vec<&'static str> {
         "RH10V9_CH",
         "WTL_FXU_BDV_NA_01",
         "DHUM_056905_WW",
+        "DHUM_231006_WW",
+        "HUM_056905_WW",
+        "STUDIO_HOOD",
     ]
 }
 
