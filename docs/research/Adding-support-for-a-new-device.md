@@ -42,50 +42,40 @@ With the device provisioned and bridged, this is the classic loop: identify the 
 
 ThinQ2 devices have been observed to use one of two binary formats. Determine which one your device uses by inspecting the packets in the management panel's device monitor, or in the logs (enable the `incoming` log topic in `config.json`).
 
-- **[TLV protocol](TLVProtocol)** — type/length/value-encoded fields, framed with a CRC16. Used e.g. by the [DualCool AC](Appliance%3ARAC_056905_WW). Extend [`TLVDevice`](#tlv-devices) in code.
-- **[AABB protocol](AABBProtocol)** — fixed-layout packets bracketed by `0xAA`…`0xBB` with a simple checksum. Used e.g. by the [fridges](Appliance%3A2REF11EIDA__4) and newer washers. Extend `AABBDevice` in code.
+- **[TLV protocol](TLVProtocol)** — type/length/value-encoded fields, framed with a CRC16. Used e.g. by DualCool AC. Use `TlvDeviceCore` in Rust.
+- **[AABB protocol](AABBProtocol)** — fixed-layout packets bracketed by `0xAA`…`0xBB` with a simple checksum. Used e.g. by fridges and newer washers. Use `AabbDeviceCore`.
 
-ThinQ1 devices (like the [WTDN3 washer](Appliance%3AWTDN3)) use the older XML-style protocol and extend `HADevice` directly.
+ThinQ1 devices (like WTDN3) use the older XML-style protocol and implement `DeviceHandler` with ThinQ1 mocks/adapters.
 
-For **TLV** devices, the [`packet-parser`](https://github.com/anszom/rethink/blob/master/tools/packet-parser.ts) utility is the main tool for decoding traffic. Run it against the rethink MQTT broker to live-decode every packet a device sends:
-
-```
-npx tsx tools/packet-parser.ts <mqtt-hostname[:port]> <device-uuid>
-```
-
-or decode a single captured hex message offline:
+For **TLV** devices, `packet-parser` and the management UI **TLV decode** panel are the main tools:
 
 ```
-npx tsx tools/packet-parser.ts -message <hex>
+cargo run -p rethink-tools --bin packet-parser -- localhost:1884 <device-uuid>
+cargo run -p rethink-tools --bin packet-parser -- -message <hex>
 ```
 
-It prints each TLV element as `t=0x… l=… v=0x… (decimal)`. For **AABB** devices there's no generic decoder — you compare raw hex packets by hand (the existing [appliance pages](Appliance%3A2REF11EIDA__4) show the byte-table format that works well for documenting them).
+Also `POST /api/decode` on the management port for catalog-aware decode + LLM export.
 
 ## Find the closest existing device and use it as a skeleton
 
-Before writing anything, look at the device classes in [`rethink/cloud/devices/`](https://github.com/anszom/rethink/tree/master/cloud/devices). The protocols for similar devices usually overlap significantly. Pick the most similar supported appliance, and copy it as a starting point. Common code can later be extracted to shared helpers like `fridge_common.ts` and `washer_common.ts`.
+Look under [`crates/rethink-devices/src/devices/`](../../crates/rethink-devices/src/devices/). Pick the most similar handler and copy it. Shared helpers live in `fridge_common.rs`, `washer_common.rs`, `ac_tables.rs`.
 
 Good reference points:
 
-- TLV air conditioner: `RAC_056905_WW.ts`
-- AABB fridge: `2RES1VE600FWC.ts` (with `fridge_common.ts`)
-- AABB washer/dryer: `F_V8_Y___W.B_2QEUK.ts` (with `washer_common.ts`)
-- ThinQ1 washer: `WTDN3.ts`
+- TLV air conditioner: `rac_056905_ww.rs`
+- AABB fridge: `dev_2res1ve600fwc.rs` / `dev_2ref12eii_p_2.rs`
+- AABB washer/dryer: `f_v8_y___w_b_2qeuk.rs`
+- ThinQ1 washer: `wtdn3.rs`
 
-Register your new class in [`cloud/ha_bridge.ts`](https://github.com/anszom/rethink/blob/master/cloud/ha_bridge.ts) by importing it and adding it to `t1deviceTypes` or `t2deviceTypes`, keyed by the device's Model ID. If two models turn out to be exactly compatible, you can map the same class under several IDs.
+Register the modelId in [`registry.rs`](../../crates/rethink-devices/src/registry.rs) (`t1_factory` / `t2_factory` + `all_t2_model_ids`). Aliases can share one factory.
 
 ### TLV devices
 
-`TLVDevice` provides a field-definition system: each call to `addField()` maps a TLV type ID to a Home Assistant property with read/write transforms, and the base class handles capability queries, periodic re-querying, and command framing for you. This is usually much less code than an AABB device.
+`TlvDeviceCore` + `FieldDefinition` map TLV type IDs to Home Assistant properties with read/write transforms; the core handles capability queries and framing.
 
 ### AABB devices
 
-`AABBDevice` gives you `processAABB(buf)` for incoming packets and `send(buf)` for outgoing ones; you parse and build the fixed byte layouts yourself (see `2RES1VE600FWC.ts` for a compact example, including publishing HA entities via `setConfig()` and reacting to `setProperty()`).
-
-Many AABB devices follow a specific scheme where updates are sent in a format consisting of a fixed-format binary "status block" prefixed with a small header.
-- for writes, the "status block" is sent once, with unchanged fields set to 0xFF
-- for notifications, the block is sent twice, first the old state, then the new one. It suffices to simply parse the new state
-
+`AabbDeviceCore` unwraps the envelope; your handler implements status parse + `set_property` command bodies. Many AABB devices use a status block with 0xFF = unchanged on writes and prev/cur pairs on notifications.
 ## Map state updates (device → cloud)
 
 With the device bridged and the parser running, **toggle settings directly on the appliance** (buttons, dials, doors) and watch which fields change. This tells you how to *read* the device's state.
@@ -105,72 +95,64 @@ Match each app action to the resulting packet, then implement `setProperty()` (o
 
 For the trickiest fields, it helps to see how LG's cloud *interprets* a value, not just how the app displays it. Two complementary techniques:
 
-- **Observe** — run [`lgcloud-monitor.ts`](https://github.com/anszom/rethink/blob/master/tools/lgcloud-monitor.ts). It logs into the official cloud the way the app does and prints the real-time MQTT notifications the cloud emits about your devices, so you can see the cloud's decoded interpretation of each state update.
-- **Inject** — use the management panel's packet-injection feature (or [`packet-sender`](https://github.com/anszom/rethink/blob/master/tools/packet-sender.ts) / `packet-sender-device.ts`) to send *modified* device-side packets while bridged, then watch via `lgcloud-monitor` how the cloud parses different field values. This lets you probe enum ranges and edge cases without having to reproduce every physical state on the appliance.
+- **Observe** — enable **bridge mode** on the device in the management UI, or validate cloud credentials with `cargo run -p rethink-tools --bin lgcloud-monitor -- --state ./state`. Live LG-cloud MQTT interpretation is available while bridged.
+- **Inject** — use the management panel's packet monitor (or `packet-sender` / MCP `inject`) to send *modified* packets while bridged, then watch how the cloud reacts.
 
 ```
-npx tsx tools/packet-sender.ts <device-uuid> <a> <s> <b5> <b6> <b7> [t1 v1] ...
+cargo run -p rethink-tools --bin packet-sender -- localhost:1884 <device-uuid> 1 1 2 2 1 501 1
 ```
 
 ## Add a test and submit a PR
 
-- Add a unit test under [`rethink/tests/cloud/devices/`](https://github.com/anszom/rethink/tree/master/tests/cloud/devices), mirroring an existing one, that feeds captured packets through your class and asserts the decoded properties. Run the suite with `npm test`.
+- Add a unit test next to the Rust handler under `crates/rethink-devices/src/devices/`, using `MockHaConnection` + `MockThinq2Device`. Run `cargo test --workspace`.
 - Open a pull request — contributions are welcome!
 
 # LLM-assisted workflow
 
-Much of the manual workflow - watching traffic, correlating device packets with the cloud's interpretation, sweeping field values, drafting the device class - is mostly pattern-matching over packet captures, which an LLM coding agent can do well. The repository ships an [MCP](https://modelcontextprotocol.io) server, [`rethink/tools/mcp-server.ts`](https://github.com/anszom/rethink/blob/master/tools/mcp-server.ts), that exposes the reverse-engineering toolkit to such an agent. The [Guidelines](#guidelines) above apply just as much here - in particular, you must understand and be able to justify any generated code.
+Much of the manual workflow - watching traffic, correlating device packets with the cloud's interpretation, sweeping field values, drafting the device class - is mostly pattern-matching over packet captures, which an LLM coding agent can do well. The repository ships an [MCP](https://modelcontextprotocol.io) server binary **`rethink-mcp`** (`crates/rethink-tools`) that exposes the reverse-engineering toolkit over management HTTP/WS + pure codecs. The [Guidelines](#guidelines) above apply just as much here - in particular, you must understand and be able to justify any generated code.
 
 ## Setup
 
-The same [Setup](#setup) prerequisites apply: the device must be provisioned and bridged. For cloud observation, log in once with [`lgcloud-monitor.ts`](https://github.com/anszom/rethink/blob/master/tools/lgcloud-monitor.ts) (it prompts for your country code and a post-login URL, and stores the credentials in `oauth.json`).
+The same [Setup](#setup) prerequisites apply: the device must be provisioned and bridged. Log into LG via the management UI (Bridge → Log into LG account); credentials land in the bridge `storage_path` (`oauth2.json`).
 
-Register the server with your agent. With Claude Code, a checked-in [`.mcp.json`](https://github.com/anszom/rethink/blob/master/.mcp.json) already declares it:
+Register the server with your agent. A checked-in [`.mcp.json`](../../.mcp.json) declares:
 
 ```json
 {
   "mcpServers": {
     "rethink-agent": {
-      "command": "npx",
-      "args": ["tsx", "tools/mcp-server.ts"],
-      "env": { "RETHINK_MGMT": "${RETHINK_MGMT:-localhost:44401}" }
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "rethink-tools", "--bin", "rethink-mcp"],
+      "env": { "RETHINK_MGMT": "localhost:44401" }
     }
   }
 }
 ```
 
-Set the `RETHINK_MGMT` environment variable to your rethink-cloud management host[:port] if it isn't `localhost:44401` (or have the agent call `set_mgmt_host` at runtime).
+Set `RETHINK_MGMT` to your rethink-cloud management host[:port] if it isn't `localhost:44401` (or call `set_mgmt_host` at runtime).
 
 ## The toolkit
 
-The server exposes the tools below. Everything that encodes or decodes packets uses the exact framing the device code uses, so CRC16 / AABB checksums / headers are handled for you.
+- **`list_devices` / `health`** — management HTTP inventory.
+- **`set_mgmt_host`** — point tools at your management host for the session.
+- **`decode_packet` / `encode_packet`** — pure `rethink-util` framing (optional `via_mgmt` uses `POST /api/decode` for catalog + unknowns).
+- **`inject`** — management `/device` WebSocket injection (gated with `inject_ok`).
+- **`read_capture`** — page a JSONL file from `rethink-capture`.
 
-- **`list_devices`** — enumerate connected devices, their model IDs, protocol, and bridge status. Usually the first call.
-- **`set_mgmt_host`** — point the device tools at your management host for the session.
-- **`decode_packet` / `encode_packet`** — turn framed hex into structured TLV/AABB fields and back. A decoded packet round-trips through `encode_packet` unchanged, so you can take a captured packet, change one field, and re-emit it.
-- **`device_start` / `device_stop` / `read_device`** — live in-memory capture of a device's wire traffic (rx = fromDevice, tx = toDevice), decoded.
-- **`cloud_start` / `cloud_stop` / `read_cloud`** — live capture of the real LG cloud's MQTT notification feed — the cloud's *decoded interpretation* of each state update. This is the ground-truth oracle (cf. [Cross-check](#cross-check-against-the-lg-clouds-own-parsing)) and works even for devices rethink can't translate yet.
-- **`inject`** — send a packet. `fromDevice` fakes a device→cloud packet (safe); `toDevice` sends a command that **actuates the appliance** and is gated behind an explicit confirmation. Injection waits for rethink to echo the packet back, so an unknown id / dropped packet is a real error rather than a silent no-op.
-- **`probe`** — the active-learning loop: sweep one field across a list of values, inject each as a fromDevice packet, and report how the cloud reacted to each — mapping enum ranges without physically reproducing every state. Each result carries `delivered` (did rethink accept it) and `observed` (the cloud's reaction), so "the cloud saw it but didn't react" is distinguishable from "never delivered".
-- **`read_capture`** — read a JSONL capture file produced by [`rethink-capture.ts`](https://github.com/anszom/rethink/blob/master/tools/rethink-capture.ts), for offline analysis.
-
-For a recorded, file-based session, [`rethink-capture.ts`](https://github.com/anszom/rethink/blob/master/tools/rethink-capture.ts) writes a device's wire traffic and the time-aligned cloud notifications to one JSONL timeline, with inline annotations you type as you operate the appliance:
+Record a session:
 
 ```
-npx tsx tools/rethink-capture.ts --cloud <mgmt-host[:port]> <device-uuid> capture.jsonl
+cargo run -p rethink-tools --bin rethink-capture -- <mgmt-host[:port]> <device-uuid> capture.jsonl
 ```
+
+Type notes on stdin while operating the appliance. Offline analysis: MCP `read_capture` or any JSONL viewer.
 
 ## A typical session
 
 1. `list_devices` to find the device UUID (and confirm it's bridged).
-2. `device_start` and `cloud_start` to begin buffering both streams.
-3. Operate the appliance and the LG app while the agent watches: it correlates each device packet (`read_device`) with the cloud notification it triggered (`read_cloud`) by timestamp, recovering field meanings — the self-supervised version of [mapping state updates](#map-state-updates-device--cloud) and [commands](#map-commands-cloud--device).
-4. For ambiguous fields, the agent runs `probe` to sweep candidate values and read the cloud's interpretation directly.
-5. The agent drafts the device class (using the [skeleton](#find-the-closest-existing-device-and-use-it-as-a-skeleton) guidance), builds test packets with `encode_packet`, and runs `npm test`, iterating until the decode round-trips.
-
-Alternatively, instead of the live `device_start` / `cloud_start` buffers (steps 2–3), record a session to a file with [`rethink-capture.ts`](https://github.com/anszom/rethink/blob/master/tools/rethink-capture.ts) while you operate the appliance, then have the agent analyse it offline with `read_capture`. This decouples the hands-on data-gathering from the analysis — handy when the two happen at different times or on different machines — and yields a single annotated timeline you can re-read and share. The active-probing step (4) still needs a live connection.
-
-The [finishing steps](#add-a-test-and-submit-a-pr) — a unit test and a pull request — are the same as the manual workflow.
+2. Capture with `rethink-capture` or the management monitor UI.
+3. Operate the appliance / LG app; decode with management RE tools or `decode_packet`.
+4. Draft a Rust handler under `crates/rethink-devices`, add fixture tests, run `cargo test --workspace`.
 
 ## Caveats
 

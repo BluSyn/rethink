@@ -1,10 +1,10 @@
 {
   "mcpServers": {
     "rethink-agent": {
-      "command": "npx",
-      "args": ["tsx", "tools/mcp-server.ts"],
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "rethink-tools", "--bin", "rethink-mcp"],
       "env": {
-        "RETHINK_MGMT": "${RETHINK_MGMT:-localhost:44401}"
+        "RETHINK_MGMT": "localhost:44401"
       }
     }
   }

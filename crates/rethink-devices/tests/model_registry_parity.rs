@@ -1,10 +1,9 @@
-//! Structural parity: every pre-rewrite ha_bridge modelId maps to a factory.
-//! Frozen list matches cloud/ha_bridge.ts ThinQ1/ThinQ2 tables (including aliases).
+//! Structural parity: every baseline ThinQ modelId maps to a factory.
+//! Frozen list is the pre-Rust-rewrite supported set (including aliases).
 
 use rethink_devices::registry::{all_t1_model_ids, all_t2_model_ids, t1_factory, t2_factory};
 
-/// Exact modelIds from TypeScript `t1deviceTypes` / `t2deviceTypes` in cloud/ha_bridge.ts
-/// at the rewrite baseline (custom-ac tip).
+/// Baseline ThinQ2 modelIds retained through the Rust rewrite (including aliases).
 const PRE_REWRITE_T2: &[&str] = &[
     "POT_056905_WW",
     "RAC_056905_WW",

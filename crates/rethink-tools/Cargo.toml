@@ -3,7 +3,7 @@ name = "rethink-tools"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI utilities: packet-parser, packet-sender, etc."
+description = "CLI utilities: packet-parser, packet-sender, capture, MCP, cloud helpers"
 
 [[bin]]
 name = "packet-parser"
@@ -13,9 +13,22 @@ path = "src/bin/packet_parser.rs"
 name = "packet-sender"
 path = "src/bin/packet_sender.rs"
 
+[[bin]]
+name = "rethink-capture"
+path = "src/bin/rethink_capture.rs"
+
+[[bin]]
+name = "rethink-mcp"
+path = "src/bin/rethink_mcp.rs"
+
+[[bin]]
+name = "lgcloud-monitor"
+path = "src/bin/lgcloud_monitor.rs"
+
 [dependencies]
 rethink-util = { workspace = true }
 rethink-core = { workspace = true }
+rethink-bridge = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
@@ -23,3 +36,5 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 hex = { workspace = true }
 rumqttc = { workspace = true }
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }

@@ -67,6 +67,11 @@ cargo run -p rethink-setup -- 192.168.120.254 'MySSID' 'MyPassword!'
 # Packet tools (against the internal plain MQTT port)
 cargo run -p rethink-tools --bin packet-parser -- -message HEX
 cargo run -p rethink-tools --bin packet-sender -- localhost:1884 DEVICE-UUID 1 1 2 2 1 501 1
+
+# Reverse-engineering helpers
+cargo run -p rethink-tools --bin rethink-capture -- localhost:44401 DEVICE-UUID capture.jsonl
+cargo run -p rethink-tools --bin rethink-mcp          # MCP stdio server (see .mcp.json)
+cargo run -p rethink-tools --bin lgcloud-monitor -- --state ./state
 ```
 
 Docker (multi-stage Rust build):
@@ -88,7 +93,7 @@ See [installation instructions](https://github.com/anszom/rethink/wiki/Installin
 | `rethink-bridge` | Optional LG-cloud bridge helpers (subprocess util, state) |
 | `rethink-cloud` | Main server binary |
 | `rethink-setup` | SoftAP provisioning CLI |
-| `rethink-tools` | `packet-parser` / `packet-sender` |
+| `rethink-tools` | `packet-parser` / `packet-sender` / `rethink-capture` / `rethink-mcp` / `lgcloud-monitor` |
 
 ### Adding a new device
 
@@ -116,10 +121,13 @@ Health and device list also expose `GET /api/health` and `GET /api/devices`.
 
 - `crates/rethink-setup` — initial Wi-Fi setup from a PC, without the LG app
 - `crates/rethink-cloud` — server that replaces LG's cloud service; hosts a simplistic MQTT broker for appliances
-- `crates/rethink-tools` — `packet-parser` / `packet-sender` utilities
-- `tools/appliance-simulator` — C++ simulator for the Wi-Fi module UART (unchanged)
+- `crates/rethink-tools` — packet tools, capture, MCP RE server, cloud credential check
+- `html/` — management UI static assets (HTML/JS) embedded by `rethink-cloud`
+- `tools/appliance-simulator` — C++ simulator for the Wi-Fi module UART
 
-The historical TypeScript sources remain in the tree for reference during the port; **Rust is the supported build/run path**.
+### TypeScript / Node deprecation
+
+The former TypeScript application (`cloud/`, `bridge/`, `util/`, `management/`, `package.json`, Node tests) has been **removed**. Runtime, tests, Docker, and CI are Rust-only. Browser-side `html/panel.js` and `html/monitor.js` remain as static front-end for the management UI (not a Node server).
 
 ## Notice
 
