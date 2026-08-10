@@ -15,16 +15,18 @@ fn management_exposes_re_and_detail_routes() {
 
     let index = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/index.html"));
     assert!(index.contains("decode_hex") || index.contains("TLV"));
-    assert!(index.contains("llm_export") || index.contains("Export for LLM"));
+    assert!(index.contains("text_breakdown") || index.contains("Text breakdown"));
     assert!(index.contains("workbench") || index.contains("Live frames"));
     assert!(index.contains("messages"), "integrated monitor frame list");
+    assert!(index.contains("detail_bar"), "selected device detail bar");
 
     let panel = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/panel.js"));
-    assert!(panel.contains("api/decode"));
     assert!(panel.contains("api/re/export"));
     assert!(panel.contains("api/devices/"));
-    assert!(panel.contains("frames") || panel.contains("loadFrameIntoDecoder"));
+    assert!(panel.contains("loadFrameIntoDecoder"));
     assert!(panel.contains("selectDevice"));
+    assert!(panel.contains("isClipJsonPayload") || panel.contains("renderClipBreakdown"));
+    assert!(panel.contains("text_breakdown"));
     assert!(mgmt.contains("/frames") || mgmt.contains("api_device_frames") || mgmt.contains("FrameLog"));
 }
 

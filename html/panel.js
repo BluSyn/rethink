@@ -192,6 +192,30 @@ function updateDevicesEmpty() {
 
 // ── Select device → monitor + decode ──────────────────────────────────────
 
+function renderDetailBar(data, fallbackId) {
+    const bar = get('detail_bar')
+    if (!bar) return
+    const fields = [
+        ['ID', data.id || fallbackId || '—'],
+        ['Model', data.modelId || data.model || '—'],
+        ['Name', data.modelName || '—'],
+        ['Platform', data.platform || '—'],
+        ['Device type', data.deviceType || '—'],
+        ['SW version', data.swVersion || '—'],
+        ['HA mapped', data.mapped === true ? 'yes' : data.mapped === false ? 'no' : '—'],
+        ['Bridged', data.bridged === true ? 'yes' : data.bridged === false ? 'no' : '—'],
+        ['HA MQTT', data.haConnected === true ? 'connected' : data.haConnected === false ? 'disconnected' : '—'],
+    ]
+    bar.innerHTML = fields
+        .map(
+            ([k, v]) =>
+                `<div class="di"><label>${escapeHtml(k)}</label><span title="${escapeHtml(
+                    String(v),
+                )}">${escapeHtml(String(v))}</span></div>`,
+        )
+        .join('')
+}
+
 async function selectDevice(id) {
     selectedDeviceId = id
     for (const d of Object.values(devices)) {
@@ -207,6 +231,17 @@ async function selectDevice(id) {
     get('device_meta').textContent = `${model || '—'} · ${id}`
     get('device_status').textContent = 'connecting…'
     get('decode_source').textContent = ''
+    renderDetailBar(
+        {
+            id,
+            modelId: model,
+            platform: local && local.remoteState.platform,
+            deviceType: local && local.remoteState.deviceType,
+            mapped: local && local.remoteState.mapped,
+            bridged: local && local.remoteState.bridged,
+        },
+        id,
+    )
 
     clearFrames()
     connectDeviceWs(id)
@@ -235,6 +270,7 @@ async function selectDevice(id) {
                 data.mapped ? 'HA mapped' : 'unmapped'
             } · ${data.bridged ? 'bridged' : 'local'}`
             if (data.modelId) get('decode_model').value = data.modelId
+            renderDetailBar(data, id)
         }
     } catch (_) {
         /* ignore */
@@ -332,17 +368,50 @@ function formatTs(ts) {
     return new Date().toLocaleTimeString()
 }
 
+/** CLIP JSON from rethink handlers (setMaskingInfo, etc.) — not UART TLV hex. */
+function isClipJsonPayload(s) {
+    const t = String(s).trim()
+    if (!t.startsWith('{')) return false
+    try {
+        const o = JSON.parse(t)
+        return o && typeof o === 'object' && (o.cmd != null || o.type != null || o.data != null)
+    } catch {
+        return false
+    }
+}
+
+function clipSummary(s) {
+    try {
+        const o = JSON.parse(s)
+        const cmd = o.cmd || '?'
+        const typ = o.type != null ? o.type : ''
+        const data =
+            o.data != null
+                ? typeof o.data === 'string'
+                    ? o.data
+                    : JSON.stringify(o.data)
+                : ''
+        return `CLIP ${cmd}${typ !== '' ? ' type=' + typ : ''}${data ? ' ' + data : ''}`
+    } catch {
+        return s
+    }
+}
+
 function pushFrame(dir, payload, injected, ts, fromHistory) {
     const messages = get('messages')
     const div = document.createElement('div')
-    div.className = `frame ${dir}${injected ? ' injected' : ''}`
-    const hex = String(payload)
-    div.dataset.hex = hex
+    const raw = String(payload)
+    const clip = isClipJsonPayload(raw)
+    div.className = `frame ${dir}${clip ? ' clip' : ''}${injected ? ' injected' : ''}`
+    div.dataset.payload = raw
     div.dataset.dir = dir
-    div.innerHTML = `<span class="ts">${escapeHtml(formatTs(ts))}</span><span class="dir">${dir}</span>${escapeHtml(
-        hex.length > 220 ? hex.slice(0, 220) + '…' : hex,
-    )}`
-    div.onclick = () => loadFrameIntoDecoder(div, hex, dir)
+    div.dataset.kind = clip ? 'clip' : 'hex'
+    const label = clip ? clipSummary(raw) : raw
+    const show = label.length > 200 ? label.slice(0, 200) + '…' : label
+    div.innerHTML = `<span class="ts">${escapeHtml(formatTs(ts))}</span><span class="dir">${
+        clip ? 'clip' : dir
+    }</span>${escapeHtml(show)}`
+    div.onclick = () => loadFrameIntoDecoder(div)
     messages.appendChild(div)
     if (!fromHistory && get('autoscroll').checked) {
         messages.scrollTop = messages.scrollHeight
@@ -350,17 +419,50 @@ function pushFrame(dir, payload, injected, ts, fromHistory) {
     return div
 }
 
-function loadFrameIntoDecoder(el, hex, dir) {
+function loadFrameIntoDecoder(el) {
     if (selectedFrameEl) selectedFrameEl.classList.remove('selected')
     selectedFrameEl = el
     el.classList.add('selected')
 
-    get('decode_hex').value = hex
+    const payload = el.dataset.payload || ''
+    const dir = el.dataset.dir || 'rx'
+    const kind = el.dataset.kind || 'hex'
+
+    get('decode_hex').value = payload
     get('decode_direction').value = dir === 'tx' ? 'toDevice' : 'fromDevice'
-    get('decode_source').textContent = `${dir} · ${hex.length} chars`
+    get('decode_source').textContent =
+        kind === 'clip' ? `CLIP JSON · ${dir}` : `${dir} · ${payload.length} hex chars`
+
     if (get('auto_decode').checked) {
-        runDecode()
+        if (kind === 'clip') {
+            renderClipBreakdown(payload)
+        } else {
+            runDecode()
+        }
     }
+}
+
+function renderClipBreakdown(payload) {
+    let pretty = payload
+    let cmd = '?'
+    let body = null
+    try {
+        body = JSON.parse(payload)
+        pretty = JSON.stringify(body, null, 2)
+        cmd = body.cmd || '?'
+    } catch (_) {}
+
+    get('tlv_body').innerHTML = `<tr><td colspan="4" class="empty-state">
+        Not a UART/TLV frame — ThinQ2 <b>CLIP</b> command from rethink (device handler → cloud MQTT),
+        e.g. setMaskingInfo after values arrive. Not Home Assistant.
+    </td></tr>`
+    get('decode_summary').innerHTML =
+        `kind=<b>CLIP</b> · cmd=<b>${escapeHtml(String(cmd))}</b> · skip TLV decode`
+    get('text_breakdown').value =
+        `# ThinQ CLIP command (not TLV)\n` +
+        `Source: rethink device handler → MQTT CLIP (cmd/type/data)\n` +
+        `Not from Home Assistant discovery; not an AABB/TLV wire frame.\n\n` +
+        pretty
 }
 
 // Inject
@@ -385,7 +487,7 @@ get('btn_send_from').onclick = () => {
     deviceWs.send(JSON.stringify({ sendFromDevice: hex }))
 }
 
-// ── Decode / LLM ──────────────────────────────────────────────────────────
+// ── Decode + text breakdown ───────────────────────────────────────────────
 
 function renderDecode(data) {
     const body = get('tlv_body')
@@ -394,7 +496,7 @@ function renderDecode(data) {
     if (els.length === 0) {
         body.innerHTML = `<tr><td colspan="4" class="empty-state">No TLV elements (protocol=${escapeHtml(
             data.protocol || '?',
-        )}${data.aabbBody ? '; AABB body present — click export for notes' : ''})</td></tr>`
+        )}${data.aabbBody ? '; AABB body present — see text breakdown' : ''})</td></tr>`
     } else {
         for (const el of els) {
             const tr = document.createElement('tr')
@@ -416,16 +518,22 @@ function renderDecode(data) {
     }${(data.notes || []).length ? ' · ' + escapeHtml(data.notes.join('; ')) : ''}`
 }
 
+/** Decode TLV/AABB and always refresh the text breakdown (was "LLM export"). */
 async function runDecode() {
     const hex = get('decode_hex').value.trim()
     if (!hex) {
-        M.toast({ html: 'No hex to decode' })
+        M.toast({ html: 'Nothing to decode' })
+        return
+    }
+    if (isClipJsonPayload(hex)) {
+        renderClipBreakdown(hex)
         return
     }
     const direction = get('decode_direction').value
     const model_id = get('decode_model').value || undefined
     try {
-        const res = await fetch(`${baseUrl}api/decode`, {
+        // Prefer /api/re/export — includes decode + full text breakdown in one call
+        const res = await fetch(`${baseUrl}api/re/export`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ hex, direction, model_id }),
@@ -435,57 +543,30 @@ async function runDecode() {
             M.toast({ html: data.error || 'decode failed' })
             return
         }
-        renderDecode(data)
+        if (data.decode) renderDecode(data.decode)
+        get('text_breakdown').value = data.text || ''
     } catch (err) {
         M.toast({ html: `decode error: ${err}` })
     }
 }
 
-async function runExport() {
-    const hex = get('decode_hex').value.trim()
-    if (!hex) {
-        M.toast({ html: 'No hex to export' })
-        return
-    }
-    const direction = get('decode_direction').value
-    const model_id = get('decode_model').value || undefined
-    try {
-        const res = await fetch(`${baseUrl}api/re/export`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ hex, direction, model_id }),
-        })
-        const data = await res.json()
-        if (!data.ok) {
-            M.toast({ html: data.error || 'export failed' })
-            return
-        }
-        if (data.decode) renderDecode(data.decode)
-        get('llm_export').value = data.text || ''
-        M.toast({ html: `Export ready (${data.unknownCount || 0} unknowns)` })
-    } catch (err) {
-        M.toast({ html: `export error: ${err}` })
-    }
-}
-
 async function copyExport() {
-    const text = get('llm_export').value
+    const text = get('text_breakdown').value
     if (!text) {
-        M.toast({ html: 'Nothing to copy — run Export first' })
+        M.toast({ html: 'Nothing to copy yet' })
         return
     }
     try {
         await navigator.clipboard.writeText(text)
-        M.toast({ html: 'Copied LLM export' })
+        M.toast({ html: 'Copied text breakdown' })
     } catch {
-        get('llm_export').select()
+        get('text_breakdown').select()
         document.execCommand('copy')
         M.toast({ html: 'Copied (fallback)' })
     }
 }
 
 get('btn_decode')?.addEventListener('click', runDecode)
-get('btn_export_llm')?.addEventListener('click', runExport)
 get('btn_copy_export')?.addEventListener('click', copyExport)
 
 // ── Status WebSocket ──────────────────────────────────────────────────────
