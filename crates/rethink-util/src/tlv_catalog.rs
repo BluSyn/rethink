@@ -38,6 +38,8 @@ pub static KNOWN_TAGS: &[KnownTag] = &[
     // RAC vertical swing (not "filter"); 0=off, 1–6 steps, 100=on/auto
     KnownTag { id: 0x321, name: "swing_vertical", family: "climate" },
     KnownTag { id: 0x322, name: "swing_horizontal", family: "climate" },
+    // RAC/CST jet cool/heat (handler jet field); 0=off in command polls
+    KnownTag { id: 0x323, name: "jet", family: "climate" },
     KnownTag { id: 0x325, name: "humidity_ctrl_flag", family: "humidity" },
     // Near filter pair 0x355/0x356 on CST values dumps
     KnownTag { id: 0x2f2, name: "filter_status_code", family: "diag" },

@@ -52,3 +52,19 @@ A and B are **byte-identical** (`hex` equal), Δt **268 ms**. Empty delta is c
 ### Fixture vs this live frame
 
 Unit-test `CST_VALUES_HEX` is the same **layout** (len 0x4b, same tag set). Live differs in live temps/humidity/mode/fan/filter counters — good sign the map is stable for CST.
+
+---
+
+## Long poll + sparse sensors (2026-08-10, ~139 s)
+
+Caps → values → CLIP masking → command echoes → empty ACKs → **sparse** values updates:
+
+| Phase | Frames | Notes |
+|-------|--------|--------|
+| Caps | TX `0x1f5=1` → RX `0xa7` b6=`0x01` | Fan table wire order **mode,fan,pad** (`0x2d7/2d9/2d8`); modes 0,1,2,6,4 fan=8 pad=44 |
+| Values | TX `0x1f5=2` → ACK → full values | Cool mode 0, fan 8, 21.5→22.0 °C ambient, set 22.0 °C, RH 90→93 %, filter 1986/2400 |
+| CLIP | `setMaskingInfo` blacklist_tlv `1200` | Same as RAC handler post-connect |
+| Commands | TX b6=`0x01`: `0x323=0` (jet), `0x20d=0`, `0x20f=0` | Echo/off commands after first values (often doubled) |
+| Sparse RX | +30s…+139s | Single-tag pushes: humidity 900→910→930, temp 43→44 half-°C |
+
+Sparse frames prove **0x336** and **0x1fd** can update **without** a full values dump — good for HA incremental state.

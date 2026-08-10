@@ -701,7 +701,7 @@ function parseEnvelopeNotes(notes) {
 
 /** Stable signature of TLV payload (order-preserving) for same-as collapse. */
 function tagSignature(els) {
-    if (!els || !els.length) return ''
+    if (!els || !els.length) return '__empty__'
     return els.map((e) => `${e.t}=${e.v}`).join('|')
 }
 
@@ -712,7 +712,26 @@ function formatOneTag(e) {
 }
 
 /**
- * Compact tag list: collapse consecutive 0x2d7/2d8/2d9 fan-table triples into one line.
+ * Detect fan-table triple starting at idx.
+ * Wire order varies: mode,pad,fan (0x2d7/2d8/2d9) or mode,fan,pad (0x2d7/2d9/2d8).
+ * @returns {{ mode: number, pad: number, fan: number }|null}
+ */
+function parseFanTableRow(els, idx) {
+    if (idx + 2 >= els.length) return null
+    if (Number(els[idx].t) !== 0x2d7) return null
+    const t1 = Number(els[idx + 1].t)
+    const t2 = Number(els[idx + 2].t)
+    if (t1 === 0x2d8 && t2 === 0x2d9) {
+        return { mode: els[idx].v, pad: els[idx + 1].v, fan: els[idx + 2].v }
+    }
+    if (t1 === 0x2d9 && t2 === 0x2d8) {
+        return { mode: els[idx].v, fan: els[idx + 1].v, pad: els[idx + 2].v }
+    }
+    return null
+}
+
+/**
+ * Compact tag list: collapse consecutive fan-table triples into one line.
  * @returns {string[]} lines (no trailing blank)
  */
 function formatTagsCompact(els) {
@@ -725,18 +744,14 @@ function formatTagsCompact(els) {
         singles.length = 0
     }
     let i = 0
-    const isTriple = (idx) =>
-        idx + 2 < els.length &&
-        Number(els[idx].t) === 0x2d7 &&
-        Number(els[idx + 1].t) === 0x2d8 &&
-        Number(els[idx + 2].t) === 0x2d9
-
     while (i < els.length) {
-        if (isTriple(i)) {
+        const row0 = parseFanTableRow(els, i)
+        if (row0) {
             flushSingles()
             const rows = []
-            while (isTriple(i)) {
-                rows.push(`(${els[i].v},${els[i + 1].v},${els[i + 2].v})`)
+            while (parseFanTableRow(els, i)) {
+                const r = parseFanTableRow(els, i)
+                rows.push(`(${r.mode},${r.pad},${r.fan})`)
                 i += 3
             }
             out.push(`fan_table[${rows.length}] mode,pad,fan: ${rows.join(' ')}`)
@@ -747,13 +762,11 @@ function formatTagsCompact(els) {
     }
     flushSingles()
 
-    // Rebuild: if only plain tags (no fan_table group), one line when short
     const hasGroup = out.some((l) => l.startsWith('fan_table'))
     if (!hasGroup) {
         if (out.length <= 8) return [`tags: ${out.join(' ')}`]
         return ['tags:', ...out.map((l) => `  ${l}`)]
     }
-    // Mixed: plain tags first as one block, then fan_table lines
     const plain = out.filter((l) => !l.startsWith('fan_table'))
     const groups = out.filter((l) => l.startsWith('fan_table'))
     const lines = ['tags:']
@@ -768,10 +781,10 @@ function formatTagsCompact(els) {
 /**
  * Compact one-frame block for multi-frame transcripts (no nested full exports).
  * @param {number|string} index 1-based
- * @param {{ sig: string, index: number }|null} prevTagRef previous TLV tag signature for same-as
+ * @param {Map<string, number>|null} sigFirstIndex map of tag/clip sig → first frame index
  * @returns {{ lines: string[], tagSig: string|null }}
  */
-function formatFrameCompact(index, decoded, payload, dir, ts, t0, prevTagRef) {
+function formatFrameCompact(index, decoded, payload, dir, ts, t0, sigFirstIndex) {
     const lines = []
     const kind = decoded.kind || (isClipJsonPayload(payload) ? 'clip' : 'hex')
     const iso = ts != null ? new Date(ts).toISOString() : '?'
@@ -789,14 +802,21 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0, prevTagRef) {
 
     if (kind === 'clip') {
         lines.push('protocol=CLIP')
-        lines.push(`payload: ${payload}`)
+        let clipBody = payload
         try {
-            lines.push(JSON.stringify(JSON.parse(payload)))
+            clipBody = JSON.stringify(JSON.parse(payload))
         } catch {
-            /* payload already printed */
+            /* keep raw */
+        }
+        const clipSig = `clip:${clipBody}`
+        if (sigFirstIndex && sigFirstIndex.has(clipSig)) {
+            lines.push(`payload: (same as #${sigFirstIndex.get(clipSig)})`)
+        } else {
+            lines.push(`payload: ${clipBody}`)
+            if (sigFirstIndex) sigFirstIndex.set(clipSig, index)
         }
         lines.push('')
-        return { lines, tagSig: null }
+        return { lines, tagSig: clipSig }
     }
 
     if (kind === 'hex' && decoded.decode) {
@@ -852,22 +872,61 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0, prevTagRef) {
 
         const els = dec.elements || []
         const sig = tagSignature(els)
-        if (!els.length) {
+        if (sigFirstIndex && sigFirstIndex.has(sig)) {
+            lines.push(`tags: (same as #${sigFirstIndex.get(sig)})`)
+        } else if (!els.length) {
             if (dec.aabbBody) lines.push(`body: ${dec.aabbBody}`)
             else lines.push('tags: (none)')
-        } else if (prevTagRef && prevTagRef.sig && prevTagRef.sig === sig) {
-            lines.push(`tags: (same as #${prevTagRef.index})`)
+            if (sigFirstIndex) sigFirstIndex.set(sig, index)
         } else {
             lines.push(...formatTagsCompact(els))
+            if (sigFirstIndex) sigFirstIndex.set(sig, index)
         }
         lines.push('')
-        return { lines, tagSig: sig || null }
+        return { lines, tagSig: sig }
     }
 
     lines.push('(undecoded)')
     lines.push(`hex: ${hex}`)
     lines.push('')
     return { lines, tagSig: null }
+}
+
+/** Human-friendly value for sparse sensor timeline. */
+function formatTagValueHint(e) {
+    const t = Number(e.t)
+    const v = Number(e.v)
+    const base = formatOneTag(e)
+    if (t === 0x1fd || t === 0x1fe) return `${base} → ${(v / 2).toFixed(1)}°C`
+    if (t === 0x336) return `${base} → ${(v / 10).toFixed(1)}% RH`
+    return base
+}
+
+/**
+ * Short RX values frames (1–3 tags) over long span — list as a timeline.
+ * @param {object[]} decodedList
+ * @param {HTMLElement[]} ordered
+ * @param {number|null} t0
+ */
+function formatSparseValuesTimeline(decodedList, ordered, t0) {
+    const rows = []
+    decodedList.forEach((d, i) => {
+        if (d.kind !== 'hex' || !d.decode) return
+        if (d.decode.protocol !== 'Tlv' && d.decode.protocol !== 'TlvRaw') return
+        const dir = ordered[i].dataset.dir || 'rx'
+        if (dir !== 'rx') return
+        const els = d.decode.elements || []
+        if (els.length === 0 || els.length > 3) return
+        // Full values dumps are long; sparse updates are short
+        const env = parseEnvelopeNotes(d.decode.notes)
+        if (env && env.b6 != null && env.b6 !== 0x04) return
+        const ts = parseTsMs(ordered[i])
+        const rel = t0 != null && ts != null ? `+${ts - t0}ms` : '?'
+        const tags = els.map(formatTagValueHint).join(' ')
+        rows.push(`#${i + 1} ${rel} ${tags}`)
+    })
+    if (rows.length < 2) return []
+    return ['## Sparse RX updates', ...rows, '']
 }
 
 /** UART kind from a silent decode result, or null. */
@@ -976,26 +1035,27 @@ async function runMultiFrameBreakdown(ordered) {
         lines.push('')
         lines.push('## Sequence (time order)')
 
-        let prevTagRef = null
+        const sigFirstIndex = new Map()
         ordered.forEach((el, i) => {
             const d = decodedList[i]
             const payload = el.dataset.payload || ''
             const dir = el.dataset.dir || 'rx'
             const ts = parseTsMs(el)
-            const { lines: block, tagSig } = formatFrameCompact(
+            const { lines: block } = formatFrameCompact(
                 i + 1,
                 d,
                 payload,
                 dir,
                 ts,
                 t0,
-                prevTagRef,
+                sigFirstIndex,
             )
             lines.push(...block)
-            if (tagSig) prevTagRef = { sig: tagSig, index: i + 1 }
         })
 
-        // TLV delta: pick comparable pair with the most actual tag changes (skip no-ops).
+        lines.push(...formatSparseValuesTimeline(decodedList, ordered, t0))
+
+        // TLV delta: prefer full values-frame pairs (more tags) with actual changes.
         let best = null
         for (let i = 0; i < decodedList.length; i++) {
             for (let j = i + 1; j < decodedList.length; j++) {
@@ -1003,11 +1063,14 @@ async function runMultiFrameBreakdown(ordered) {
                 const mapA = tagMapFromDecode(decodedList[i].decode)
                 const mapB = tagMapFromDecode(decodedList[j].decode)
                 const summary = tlvDeltaSummary(mapA, mapB)
+                const nTags = Math.min(mapA.size, mapB.size)
                 const score =
                     summary.appeared.length + summary.disappeared.length + summary.changed.length
                 if (score === 0) continue
-                if (!best || score > best.score || (score === best.score && j > best.j)) {
-                    best = { i, j, mapA, mapB, summary, score }
+                // Weight full dumps over single-tag sparse frames
+                const rank = score * 100 + nTags
+                if (!best || rank > best.rank || (rank === best.rank && j > best.j)) {
+                    best = { i, j, mapA, mapB, summary, score, rank }
                 }
             }
         }
