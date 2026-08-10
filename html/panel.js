@@ -1,25 +1,83 @@
+/**
+ * ThinQ deviceType codes → short labels (wideq DeviceType + rethink research).
+ * Display always as "Name (code)" when known.
+ */
+const DEVICE_TYPE_NAMES = {
+    101: 'Refrigerator',
+    102: 'Kimchi Refrigerator',
+    103: 'Water Purifier',
+    201: 'Washer',
+    202: 'Dryer',
+    203: 'Styler',
+    204: 'Dishwasher',
+    221: 'WashTower',
+    222: 'WashTower',
+    223: 'WashTower',
+    301: 'Oven / Range',
+    302: 'Microwave',
+    303: 'Cooktop',
+    304: 'Range Hood',
+    401: 'A/C',
+    402: 'Air Purifier',
+    403: 'Dehumidifier',
+    404: 'Humidifier',
+    501: 'Robot Vacuum',
+    504: 'Vacuum',
+    1001: 'ARCH',
+    3001: 'MISSG',
+    3002: 'Sensor',
+    3003: 'IoT Lighting',
+    3004: 'IoT Motion Sensor',
+    3005: 'IoT Smart Plug',
+    3006: 'IoT Dust Sensor',
+    3102: 'Solar Sensor',
+    4001: 'EMS Air Station',
+    4003: 'Air Sensor',
+}
+
+/** Extract bare deviceType code from raw or already-formatted values. */
+function deviceTypeCode(raw) {
+    if (raw == null || raw === '' || raw === '—') return null
+    const s = String(raw).trim()
+    const paren = s.match(/\((\d{3,4})\)\s*$/)
+    if (paren) return paren[1]
+    const lead = s.match(/^(\d{3,4})\b/)
+    if (lead) return lead[1]
+    return null
+}
+
+/**
+ * Format device type for UI: "A/C (401)" when known, else bare code or —.
+ * @param {string|number|null|undefined} raw
+ */
+function formatDeviceType(raw) {
+    if (raw == null || raw === '' || raw === '—') return '—'
+    const code = deviceTypeCode(raw)
+    if (!code) return String(raw).trim()
+    const name = DEVICE_TYPE_NAMES[code] || DEVICE_TYPE_NAMES[Number(code)]
+    if (name) return `${name} (${code})`
+    return code
+}
+
+function deviceTypeAutocompleteData() {
+    const data = {}
+    for (const [code, name] of Object.entries(DEVICE_TYPE_NAMES)) {
+        data[`${code} (${name})`] = null
+        data[`${name} (${code})`] = null
+    }
+    return data
+}
+
 document.addEventListener('DOMContentLoaded', function () {
     M.Tooltip.init(document.querySelectorAll('.tooltipped'))
     M.Modal.init(document.querySelectorAll('.modal'))
     M.Autocomplete.init(document.querySelectorAll('.autocomplete'), {
-        data: {
-            '101 (Refrigerator)': null,
-            '201 (Washer)': null,
-            '202 (Dryer)': null,
-            '204 (Dishwasher)': null,
-            '223 (WashTower)': null,
-            '301 (Gas Range)': null,
-            '302 (Microwave)': null,
-            '304 (Range Hood)': null,
-            '401 (Air Conditioner)': null,
-            '403 (Dehumidifier)': null,
-            '404 (Humidifier)': null,
-        },
+        data: deviceTypeAutocompleteData(),
     })
 })
 
 /** Bump when sequence-export / decode UI changes so you can confirm the binary embeds this file. */
-const PANEL_UI_REV = 'aabb-decode'
+const PANEL_UI_REV = 'device-type-labels'
 
 document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('panel_ui_rev')
@@ -98,6 +156,7 @@ class DeviceEntry {
             ? `<span class="chip chip-mapped">mapped</span>`
             : `<span class="chip chip-unmapped">raw</span>`
 
+        const dtype = formatDeviceType(this.remoteState.deviceType)
         this.row.innerHTML = `
             <td class="col-model">
                 <div>${escapeHtml(model)}${
@@ -105,7 +164,9 @@ class DeviceEntry {
                         ? ''
                         : ' <i class="material-icons tooltipped tiny" data-tooltip="Not mapped to HA" style="color:#f0b429;font-size:14px;vertical-align:middle">warning</i>'
                 }</div>
-                <div class="id-sub">${escapeHtml(shortId(this.id))}</div>
+                <div class="id-sub">${escapeHtml(shortId(this.id))}${
+                    dtype !== '—' ? ' · ' + escapeHtml(dtype) : ''
+                }</div>
             </td>
             <td class="col-plat">${escapeHtml(platform)}</td>
             <td class="col-ha">${haChip}</td>
@@ -165,7 +226,8 @@ class DeviceEntry {
                 } else {
                     get('btn_devicetype_continue').onclick = () => {
                         let devType = get('devtype-input').value
-                        devType = devType.split(' ')[0]
+                        // Accept "401", "401 (A/C)", or "A/C (401)"
+                        devType = deviceTypeCode(devType) || String(devType).split(/\s+/)[0]
                         startBridge(devType)
                         M.Modal.getInstance(get('devicetype_query')).close()
                     }
@@ -213,7 +275,7 @@ function renderDetailBar(data, fallbackId) {
         ['Model', data.modelId || data.model || '—'],
         ['Name', data.modelName || '—'],
         ['Platform', data.platform || '—'],
-        ['Device type', data.deviceType || '—'],
+        ['Device type', formatDeviceType(data.deviceType)],
         ['SW version', data.swVersion || '—'],
         ['HA mapped', data.mapped === true ? 'yes' : data.mapped === false ? 'no' : '—'],
         ['Bridged', data.bridged === true ? 'yes' : data.bridged === false ? 'no' : '—'],
@@ -654,7 +716,7 @@ function deviceContextLines() {
     if (selectedDeviceId && devices[selectedDeviceId]) {
         const s = devices[selectedDeviceId].remoteState || {}
         platform = s.platform || platform
-        deviceType = s.deviceType || deviceType
+        deviceType = s.deviceType != null ? s.deviceType : deviceType
         mapped = s.mapped === true ? 'yes' : s.mapped === false ? 'no' : mapped
         bridged = s.bridged === true ? 'yes' : s.bridged === false ? 'no' : bridged
     }
@@ -681,12 +743,23 @@ function deviceContextLines() {
             modelId: mid && mid !== '—' ? mid : model,
             modelName: name || '—',
             platform,
-            deviceType,
+            // Prefer bare code for paste exports; label is recoverable via formatDeviceType
+            deviceType: deviceTypeCode(deviceType) || deviceType,
+            deviceTypeLabel: formatDeviceType(deviceType),
             mapped,
             bridged,
         }
     }
-    return { id, modelId: model, modelName: '—', platform, deviceType, mapped, bridged }
+    return {
+        id,
+        modelId: model,
+        modelName: '—',
+        platform,
+        deviceType: deviceTypeCode(deviceType) || deviceType,
+        deviceTypeLabel: formatDeviceType(deviceType),
+        mapped,
+        bridged,
+    }
 }
 
 /** Pull kind/b5/b6/b7/len from decode notes when present. */
@@ -1143,7 +1216,7 @@ async function runMultiFrameBreakdown(ordered) {
         const lines = []
         lines.push('# ThinQ frame sequence')
         lines.push(
-            `device: ${dev.modelId} type=${dev.deviceType} id=${dev.id} platform=${dev.platform} mapped=${dev.mapped} bridged=${dev.bridged}`,
+            `device: ${dev.modelId} type=${dev.deviceTypeLabel || formatDeviceType(dev.deviceType)} id=${dev.id} platform=${dev.platform} mapped=${dev.mapped} bridged=${dev.bridged}`,
         )
         lines.push(
             `frames: ${ordered.length} · t0=${

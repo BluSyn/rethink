@@ -89,19 +89,28 @@ Last updated: 2026-08-10. Sources are named with the capability or model they co
 
 ## DeviceType quick reference
 
+Management UI shows **name + code** (e.g. `A/C (401)`). Map lives in `html/panel.js` (`DEVICE_TYPE_NAMES`; wideq + rethink).
+
 | deviceType | Class | Examples |
 |------------|-------|----------|
-| 101 | Fridge | 2REF*, GML844 / 2REF12EII_P_2 |
+| 101 | Refrigerator | 2REF*, GML844 / 2REF12EII_P_2 |
+| 102 | Kimchi Refrigerator | |
+| 103 | Water purifier | 1WPU4CIGCR__2 |
 | 201 | Washer | F_V*, VCDWL2QEUK, WTDN3 |
 | 202 | Dryer | RV13*, RH10V9_CH |
 | 203 | Styler | ST_B_E4H01Y_APL |
-| 221/222 | KR WashTower | FAKPK21021 / BDH_D39301_KR |
-| 304 | Hood | STUDIO_HOOD |
-| 401 | AC | RAC, WIN, CST, POT |
+| 204 | Dishwasher | |
+| 221/222/223 | WashTower | FAKPK21021 / BDH_D39301_KR / WHT_* |
+| 301 | Oven / Range | |
+| 302 | Microwave | |
+| 303 | Cooktop | |
+| 304 | Range Hood | STUDIO_HOOD |
+| 401 | A/C | RAC, WIN, CST, POT |
+| 402 | Air Purifier | |
 | 403 | Dehumidifier | DHUM_* |
 | 404 | Humidifier | HUM_056905_WW |
+| 501 | Robot Vacuum | |
 | 504 | Vacuum | HWWA9K_F2 |
-| 103 | Water purifier | 1WPU4CIGCR__2 |
 
 ## Adding support (Rust)
 
