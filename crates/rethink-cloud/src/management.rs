@@ -571,8 +571,8 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
                     .collect();
             }
             notes.push(format!(
-                "kind=0x{:02x} b5=0x{:02x} b6=0x{:02x} len={}",
-                t.frame.kind, t.frame.byte5, t.frame.byte6, t.frame.len
+                "kind=0x{:02x} b5=0x{:02x} b6=0x{:02x} b7=0x{:02x} len={}",
+                t.frame.kind, t.frame.byte5, t.frame.byte6, t.frame.byte7, t.frame.len
             ));
             if t.frame.len == 0 {
                 notes.push("empty body (ACK/keepalive-style)".into());

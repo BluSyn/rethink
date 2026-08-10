@@ -65,8 +65,26 @@ Body contains byte pairs that *look* like humidity/temp (`0x36 0x50` ≈ half-°
 
 ---
 
+## Query exchange (caps then values) — 2026-08-10 capture
+
+Typical thinq2 poll (~1.9 s) observed on device `fb4349b1-…`:
+
+| Step | Dir | Frame | Notes |
+|------|-----|-------|--------|
+| 1–2 | TX | `0x65` `0x1f5=1` (dup) | **query_type=1** → capability / feature table |
+| 3 | RX | `0xa7` b6=`0x01` len=104 | **Caps** reply (`0x3e8=caps_marker_hum`, feature bits, fan table 17–21) |
+| 4–5 | TX | `0x65` `0x1f5=2` (dup) | **query_type=2** → values |
+| 6–7 | RX | same caps body as #3 | Retries / late caps (b7 sequence advances; TLV tags identical) |
+| 8 | RX | `0x87` b6=`0x10` len=0 | Empty **ACK** |
+| 9 | RX | `0xa7` b6=`0x04` len=88 | **Values**: power=1, mode=17 (Smart), fan=2, target RH=30, ambient 33.0 °C (`0x1fd=66`), `0x336=60` (6.0% or wrong scale — recheck), `0x232=7974` usage |
+
+Duplicate TX pairs are common (UI/bridge double-send). Caps replies with identical tags but different CRC/b7 are not state changes.
+
+---
+
 ## RE workflow tips (this model)
 
 1. Prefer pairs of **same kind** (both `a70204…` values, or two binary frames).
 2. When protocol is `UartBinary`, use hex dump / struct layout RE, not tag catalog.
 3. For fan table, only one triple should change when you set fan in a given mode (write path); all six appear on full values dumps.
+4. `0x1f5=1` → expect caps (`b6=0x01`); `0x1f5=2` → expect values (`b6=0x04`).
