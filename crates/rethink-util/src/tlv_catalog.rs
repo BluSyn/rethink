@@ -43,18 +43,35 @@ pub static KNOWN_TAGS: &[KnownTag] = &[
     KnownTag { id: 0x1ed, name: "water_filter_level", family: "humidifier" },
     KnownTag { id: 0x1ee, name: "watertank_remain", family: "humidifier" },
     KnownTag { id: 0x21b, name: "off_timer", family: "timer" },
+    // RAC/DHUM: turn-on timer (paired with 0x21b); hours, 0=off
+    KnownTag { id: 0x21c, name: "on_timer", family: "timer" },
     KnownTag { id: 0x21e, name: "tank_or_bucket_light", family: "humidity" },
     KnownTag { id: 0x21f, name: "display_brightness", family: "humidifier" },
     KnownTag { id: 0x221, name: "error_code", family: "diag" },
     KnownTag { id: 0x225, name: "auto_dry_remain", family: "humidifier" },
+    // DHUM values: often 0; likely reserved / feature flag group with 0x21b–0x226
+    KnownTag { id: 0x226, name: "timer_or_sched_flag", family: "timer" },
     KnownTag { id: 0x240, name: "air_quality", family: "aq" },
+    // DHUM: cumulative counter (runtime/energy-ish); units unconfirmed — seen ~7k
+    KnownTag { id: 0x232, name: "usage_counter", family: "diag" },
+    // DHUM: small status/aux reading (seen 26); not half-°C ambient (that's 0x1fd)
+    KnownTag { id: 0x233, name: "aux_reading", family: "diag" },
     KnownTag { id: 0x2a2, name: "uv_nano", family: "humidity" },
+    // DHUM: often 0 with values; filter/sensor related family near 0x2a2
+    KnownTag { id: 0x2ac, name: "filter_or_sensor_flag", family: "diag" },
     KnownTag { id: 0x2ad, name: "watertank_time", family: "humidifier" },
     KnownTag { id: 0x2b2, name: "bucket_full", family: "humidity" },
+    // DHUM fan-per-mode memory table (triple stream, not stored as HA state)
+    KnownTag { id: 0x2d7, name: "fan_table_mode", family: "climate" },
+    KnownTag { id: 0x2d8, name: "fan_table_pad", family: "climate" },
+    KnownTag { id: 0x2d9, name: "fan_table_fan", family: "climate" },
+    // DHUM: often 0 in values; likely capability/echo bit near humidity block
+    KnownTag { id: 0x324, name: "humidity_feature_flag", family: "humidity" },
     KnownTag { id: 0x333, name: "pm1", family: "aq" },
     KnownTag { id: 0x334, name: "pm25", family: "aq" },
     KnownTag { id: 0x335, name: "pm10", family: "aq" },
     KnownTag { id: 0x337, name: "sensor_mon", family: "humidifier" },
+    KnownTag { id: 0x33a, name: "humidity_aux_flag", family: "humidity" },
     KnownTag { id: 0x355, name: "filter_used", family: "diag" },
     KnownTag { id: 0x356, name: "filter_max", family: "diag" },
     KnownTag { id: 0x35a, name: "start_time", family: "timer" },

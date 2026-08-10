@@ -581,35 +581,52 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
         }
         Decoded::Unknown(u) => {
             notes.push(format!("packet_codec: {}", u.reason));
-            // Raw TLV body (no UART envelope) — try whole buffer, then after 2-byte prefix
-            let candidates: &[(usize, &[u8])] = if bytes.len() > 2 {
-                &[(0, &bytes[..]), (2, &bytes[2..])]
-            } else {
-                &[(0, &bytes[..])]
-            };
-            let mut parsed = false;
-            for &(base, slice) in candidates {
-                let spans = tlv::parse_with_spans(slice);
-                if !spans.is_empty() {
-                    tlv_spans = spans
-                        .into_iter()
-                        .map(|s| {
-                            (
-                                s.tlv.t,
-                                s.tlv.v,
-                                base + s.byte_start,
-                                base + s.byte_end,
-                            )
-                        })
-                        .collect();
-                    protocol = "TlvRaw".into();
-                    parsed = true;
-                    break;
+            // Non-TLV UART envelope (private/SUPERSET/extended): do NOT invent TLV tags.
+            if u.reason.starts_with("uart_binary") {
+                protocol = "UartBinary".into();
+                if bytes.len() >= 13 {
+                    let len = bytes[10] as usize;
+                    let start = 11usize;
+                    let end = (start + len).min(bytes.len().saturating_sub(2));
+                    if end > start {
+                        aabb_body = Some(hex::encode(&bytes[start..end]));
+                        notes.push(format!(
+                            "binary body {} bytes — not climate TLV; see kind/b5/b6 in notes",
+                            end - start
+                        ));
+                    }
                 }
-            }
-            if !parsed && bytes.len() >= 2 {
-                aabb_body = Some(hex.clone());
-                protocol = "Raw".into();
+            } else {
+                // Raw TLV body (no UART envelope) — try whole buffer, then after 2-byte prefix
+                let candidates: &[(usize, &[u8])] = if bytes.len() > 2 {
+                    &[(0, &bytes[..]), (2, &bytes[2..])]
+                } else {
+                    &[(0, &bytes[..])]
+                };
+                let mut parsed = false;
+                for &(base, slice) in candidates {
+                    let spans = tlv::parse_with_spans(slice);
+                    if !spans.is_empty() {
+                        tlv_spans = spans
+                            .into_iter()
+                            .map(|s| {
+                                (
+                                    s.tlv.t,
+                                    s.tlv.v,
+                                    base + s.byte_start,
+                                    base + s.byte_end,
+                                )
+                            })
+                            .collect();
+                        protocol = "TlvRaw".into();
+                        parsed = true;
+                        break;
+                    }
+                }
+                if !parsed && bytes.len() >= 2 {
+                    aabb_body = Some(hex.clone());
+                    protocol = "Raw".into();
+                }
             }
         }
     }

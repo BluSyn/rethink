@@ -191,47 +191,66 @@ pub fn decode_packet(hex_str: &str) -> Decoded {
         });
     }
 
-    // TLV: uart kind at index 6
-    if buf.len() >= 13
-        && buf[2] == 0x04
-        && (buf[6] == 0x87 || buf[6] == 0xa7 || buf[6] == 0x65)
-    {
-        let from_device = buf[6] == 0x87 || buf[6] == 0xa7;
+    // UART envelope: 04 00 00 00 | kind | b5 b6 b7 | len | body | crc16
+    // Standard climate TLV uses kind 0x87/0xa7 (fromDevice) or 0x65 (toDevice).
+    // Other kinds (e.g. 0xa8 SUPERSET/private blobs) share the envelope but are not TLV.
+    if buf.len() >= 13 && buf[2] == 0x04 && buf[3] == 0x00 && buf[4] == 0x00 && buf[5] == 0x00 {
+        let kind = buf[6];
         let len = buf[10] as usize;
         if 11 + len + 2 > buf.len() {
             return Decoded::Unknown(DecodedUnknown {
                 hex: cleaned,
-                reason: "TLV length field overruns buffer".into(),
+                reason: "UART length field overruns buffer".into(),
             });
         }
         let crc_ok = crc16(&buf[2..]) == 0;
-        let tlv = tlv::parse(&buf[11..11 + len]);
+        let body = &buf[11..11 + len];
         let frame = TlvFrame {
-            kind: buf[6],
+            kind,
             byte5: buf[7],
             byte6: buf[8],
             byte7: buf[9],
             len: buf[10],
         };
-        return if from_device {
-            Decoded::Tlv(DecodedTlv {
-                direction: Direction::FromDevice,
-                crc_ok,
-                tlv,
-                frame,
-                a: None,
-                s: None,
-            })
-        } else {
-            Decoded::Tlv(DecodedTlv {
-                direction: Direction::ToDevice,
-                crc_ok,
-                tlv,
-                frame,
-                a: Some(buf[0]),
-                s: Some(buf[1]),
-            })
-        };
+        let from_device = kind != 0x65;
+        let is_standard_tlv_kind = kind == 0x87 || kind == 0xa7 || kind == 0x65;
+        // Values/query path: b5==2 and b6 in {1,2,4} is the climate TLV dialect.
+        let looks_like_climate_tlv = is_standard_tlv_kind
+            && (buf[7] == 0x01 || buf[7] == 0x02)
+            && matches!(buf[8], 0x01 | 0x02 | 0x04);
+
+        if looks_like_climate_tlv {
+            let tlv = tlv::parse(body);
+            return if from_device {
+                Decoded::Tlv(DecodedTlv {
+                    direction: Direction::FromDevice,
+                    crc_ok,
+                    tlv,
+                    frame,
+                    a: None,
+                    s: None,
+                })
+            } else {
+                Decoded::Tlv(DecodedTlv {
+                    direction: Direction::ToDevice,
+                    crc_ok,
+                    tlv,
+                    frame,
+                    a: Some(buf[0]),
+                    s: Some(buf[1]),
+                })
+            };
+        }
+
+        // Non-TLV UART (private / SUPERSET / extended). Surface as Unknown with structured reason
+        // so management UI does not invent phantom TLV tags from binary body.
+        return Decoded::Unknown(DecodedUnknown {
+            hex: cleaned,
+            reason: format!(
+                "uart_binary kind=0x{kind:02x} b5=0x{:02x} b6=0x{:02x} b7=0x{:02x} body_len={len} crc_ok={crc_ok}",
+                buf[7], buf[8], buf[9]
+            ),
+        });
     }
 
     Decoded::Unknown(DecodedUnknown {
@@ -297,6 +316,25 @@ mod tests {
             assert_eq!(a.length, 0x16);
         } else {
             panic!("expected aabb");
+        }
+    }
+
+    /// DHUM private/SUPERSET-class frame (kind 0xa8) must not be misread as climate TLV.
+    #[test]
+    fn decode_uart_binary_kind_a8_not_tlv() {
+        let hex = "000004000000a8661001490a010d10cf0111320200000000000001000000030100000000000000331e0007b81e0000000002260226024e365000fa00002100000000000000000222011e011c1e011e1e2f90bc00ef61";
+        let d = decode_packet(hex);
+        match d {
+            Decoded::Unknown(u) => {
+                assert!(
+                    u.reason.starts_with("uart_binary"),
+                    "reason={}",
+                    u.reason
+                );
+                assert!(u.reason.contains("kind=0xa8"));
+                assert!(u.reason.contains("crc_ok=true"));
+            }
+            other => panic!("expected uart_binary unknown, got {:?}", other.protocol()),
         }
     }
 
