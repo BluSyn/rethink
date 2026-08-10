@@ -74,12 +74,16 @@ cargo run -p rethink-tools --bin rethink-mcp          # MCP stdio server (see .m
 cargo run -p rethink-tools --bin lgcloud-monitor -- --state ./state
 ```
 
-Docker (multi-stage Rust build):
+Docker (multi-stage Rust build with dependency-layer caching):
 
 ```bash
 docker build -t rethink .
 docker run --rm -p 443:443 -p 8883:8883 -p 44401:44401 -v rethink-data:/app/data rethink
 ```
+
+The Dockerfile compiles crates.io dependencies from **manifests only** (a cached layer),
+then copies `crates/` + `html/` and rebuilds just the workspace packages. Source-only
+edits skip redownloading and recompiling third-party crates.
 
 See [installation instructions](https://github.com/anszom/rethink/wiki/Installing-rethink‐cloud) for network / DNS setup (`rethink.lgthinq.com`, etc.).
 

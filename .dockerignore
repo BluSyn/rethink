@@ -1,6 +1,17 @@
 .git
 target
+**/*.rs.bk
 *.tsbuildinfo
 .DS_Store
 node_modules
 dist
+docs
+# Local state / secrets must not enter the build context
+*.key
+*.pem
+*.cert
+*.csr
+*.crt
+oauth.json
+state
+**/oauth2.json
