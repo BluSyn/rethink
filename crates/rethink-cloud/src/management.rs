@@ -17,11 +17,101 @@ use rethink_util::tlv;
 use rethink_util::tlv_catalog::{classify_tlvs, llm_export_text, KNOWN_TAGS};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 static HTML: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../../html");
+
+/// Per-device ring buffer of recent wire frames for the integrated monitor.
+const FRAME_RING_CAP: usize = 128;
+
+#[derive(Clone, Debug)]
+pub struct FrameEvent {
+    pub dir: &'static str, // "rx" | "tx"
+    pub hex: String,
+    pub injected: bool,
+    pub ts_ms: u64,
+}
+
+impl FrameEvent {
+    pub fn to_json(&self) -> Value {
+        json!({
+            self.dir: self.hex,
+            "injected": self.injected,
+            "ts": self.ts_ms,
+            "history": true,
+        })
+    }
+}
+
+/// Shared capture of recent frames so selecting a device shows traffic immediately.
+#[derive(Default)]
+pub struct FrameLog {
+    by_device: Mutex<HashMap<String, VecDeque<FrameEvent>>>,
+}
+
+impl FrameLog {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    fn now_ms() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
+    }
+
+    pub fn push(&self, device_id: &str, dir: &'static str, hex: String, injected: bool) {
+        let ev = FrameEvent {
+            dir,
+            hex,
+            injected,
+            ts_ms: Self::now_ms(),
+        };
+        let mut map = self.by_device.lock();
+        let q = map.entry(device_id.to_string()).or_default();
+        if q.len() >= FRAME_RING_CAP {
+            q.pop_front();
+        }
+        q.push_back(ev);
+    }
+
+    pub fn recent(&self, device_id: &str) -> Vec<FrameEvent> {
+        self.by_device
+            .lock()
+            .get(device_id)
+            .map(|q| q.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Attach capture handlers for the life of the device connection.
+    pub fn attach(self: &Arc<Self>, dev: &crate::devmgr::ConnectedDevice) {
+        let id = dev.id.clone();
+        let log = self.clone();
+        dev.add_data_handler(move |buf| {
+            log.push(&id, "rx", hex::encode(buf), false);
+        });
+        let id2 = dev.id.clone();
+        let log2 = self.clone();
+        dev.add_send_handler(move |msg| {
+            match msg {
+                SendToDevice::T2Packet(b) => {
+                    log2.push(&id2, "tx", hex::encode(b), false);
+                }
+                SendToDevice::T2Clip { cmd, msg_type, data } => {
+                    let s = json!({"cmd": cmd, "type": msg_type, "data": data}).to_string();
+                    log2.push(&id2, "tx", s, false);
+                }
+                SendToDevice::T1Json(v) => {
+                    log2.push(&id2, "tx", v.to_string(), false);
+                }
+            }
+        });
+    }
+}
 
 #[derive(Clone)]
 pub struct MgmtState {
@@ -30,6 +120,7 @@ pub struct MgmtState {
     pub manager: Arc<DeviceManager>,
     pub bridge: Option<Arc<Bridge>>,
     pub subscribers: Arc<Mutex<Vec<mpsc::UnboundedSender<String>>>>,
+    pub frame_log: Arc<FrameLog>,
 }
 
 pub fn router(state: MgmtState) -> Router {
@@ -46,6 +137,7 @@ pub fn router(state: MgmtState) -> Router {
         .route("/api/decode", post(api_decode))
         .route("/api/re/export", post(api_re_export))
         .route("/api/devices/{device_id}", get(api_device_detail))
+        .route("/api/devices/{device_id}/frames", get(api_device_frames))
         .fallback(static_file)
         .with_state(state)
 }
@@ -148,6 +240,23 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
 
     // Register data listeners when device appears
     let mut hooked: HashSet<String> = HashSet::new();
+    let mut history_sent = false;
+
+    // Replay recent frames immediately so the UI is not empty until the next packet.
+    let history = state.frame_log.recent(&id);
+    if !history.is_empty() {
+        let _ = socket
+            .send(Message::Text(
+                json!({
+                    "history": history.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
+                    "count": history.len(),
+                })
+                .to_string()
+                .into(),
+            ))
+            .await;
+        history_sent = true;
+    }
 
     loop {
         tokio::select! {
@@ -161,13 +270,26 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                             "status": "online",
                             "meta": d.meta,
                         }).to_string().into())).await;
+                        // History may have grown while waiting offline → online; re-send once.
+                        if !history_sent {
+                            let hist = state.frame_log.recent(&id);
+                            if !hist.is_empty() {
+                                let _ = socket.send(Message::Text(json!({
+                                    "history": hist.iter().map(|e| e.to_json()).collect::<Vec<_>>(),
+                                    "count": hist.len(),
+                                }).to_string().into())).await;
+                            }
+                            history_sent = true;
+                        }
                         if !hooked.contains(&id) {
                             hooked.insert(id.clone());
+                            // Live fan-out only — ring buffer is filled by FrameLog::attach in main.
                             let tx = data_tx.clone();
                             d.add_data_handler(move |buf| {
                                 let _ = tx.send(json!({
                                     "rx": hex::encode(buf),
                                     "injected": false,
+                                    "ts": FrameLog::now_ms(),
                                 }).to_string());
                             });
                             let tx2 = data_tx.clone();
@@ -176,14 +298,17 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                                     SendToDevice::T2Packet(b) => json!({
                                         "tx": hex::encode(b),
                                         "injected": false,
+                                        "ts": FrameLog::now_ms(),
                                     }),
                                     SendToDevice::T2Clip { cmd, msg_type, data } => json!({
                                         "tx": { "cmd": cmd, "type": msg_type, "data": data },
                                         "injected": false,
+                                        "ts": FrameLog::now_ms(),
                                     }),
                                     SendToDevice::T1Json(v) => json!({
-                                        "tx": v.to_string(),
+                                        "tx": v,
                                         "injected": false,
+                                        "ts": FrameLog::now_ms(),
                                     }),
                                 };
                                 let _ = tx2.send(tx_val.to_string());
@@ -210,6 +335,8 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                             if let Some(dev) = state.manager.get(&id) {
                                 if let Some(s) = v.get("sendToDevice").and_then(|x| x.as_str()) {
                                     if let Ok(buf) = hex::decode(s) {
+                                        // Mark inject in the ring buffer (send handlers also log a live copy).
+                                        state.frame_log.push(&id, "tx", s.to_string(), true);
                                         (dev.send_to_device)(SendToDevice::T2Packet(buf));
                                     }
                                 }
@@ -218,6 +345,7 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                                 }
                                 if let Some(s) = v.get("sendFromDevice").and_then(|x| x.as_str()) {
                                     if let Ok(buf) = hex::decode(s) {
+                                        state.frame_log.push(&id, "rx", s.to_string(), true);
                                         (dev.emit_data)(buf);
                                     }
                                 }
@@ -547,6 +675,26 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
     .into_response()
 }
 
+async fn api_device_frames(
+    State(state): State<MgmtState>,
+    Path(device_id): Path<String>,
+) -> Json<Value> {
+    let frames = state.frame_log.recent(&device_id);
+    Json(json!({
+        "ok": true,
+        "deviceId": device_id,
+        "count": frames.len(),
+        "frames": frames.iter().map(|e| {
+            json!({
+                "dir": e.dir,
+                "hex": e.hex,
+                "injected": e.injected,
+                "ts": e.ts_ms,
+            })
+        }).collect::<Vec<_>>(),
+    }))
+}
+
 async fn api_device_detail(
     State(state): State<MgmtState>,
     Path(device_id): Path<String>,
@@ -589,6 +737,19 @@ async fn api_device_detail(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_log_ring_keeps_recent() {
+        let log = FrameLog::new();
+        for i in 0..150 {
+            log.push("dev1", "rx", format!("{i:04x}"), false);
+        }
+        let recent = log.recent("dev1");
+        assert_eq!(recent.len(), FRAME_RING_CAP);
+        assert!(recent.first().unwrap().hex.contains(&format!("{:04x}", 150 - FRAME_RING_CAP)));
+        assert_eq!(recent.last().unwrap().hex, format!("{:04x}", 149));
+        assert!(log.recent("other").is_empty());
+    }
 
     fn re_decode_for_test(hex: &str, direction: Option<&str>) -> Result<Value, String> {
         decode_hex_payload(hex, direction)

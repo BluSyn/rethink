@@ -1,7 +1,6 @@
 document.addEventListener('DOMContentLoaded', function () {
     M.Tooltip.init(document.querySelectorAll('.tooltipped'))
     M.Modal.init(document.querySelectorAll('.modal'))
-    M.FormSelect.init(document.querySelectorAll('select'))
     M.Autocomplete.init(document.querySelectorAll('.autocomplete'), {
         data: {
             '101 (Refrigerator)': null,
@@ -19,32 +18,55 @@ document.addEventListener('DOMContentLoaded', function () {
     })
 })
 
-let ws
-let reconnectTimer
 const STATUS_OK = `<i class="tiny material-icons" style="color:#3dd68c">check</i>`
 const STATUS_ERROR = `<i class="tiny material-icons" style="color:#f07178">error</i>`
 const STATUS_UNKNOWN = `<i class="tiny material-icons" style="color:#8b9bb0">question_mark</i>`
+
+let ws
+let deviceWs
+let reconnectTimer
+let deviceReconnectTimer
 let bridge_status = false
 let selectedDeviceId = null
+let selectedFrameEl = null
+
+const devices = {}
+const baseUrl = new URL(window.location)
+baseUrl.search = ''
+baseUrl.hash = ''
 
 get('status_rethink').innerHTML = STATUS_UNKNOWN
 get('status_mqtt').innerHTML = STATUS_UNKNOWN
 get('status_bridge').innerHTML = STATUS_UNKNOWN
 get('status_bridge_text').innerText = 'Unknown'
 
-const devices = {}
+function get(id) {
+    return document.getElementById(id)
+}
 
-const baseUrl = new URL(window.location)
-baseUrl.search = ''
-baseUrl.hash = ''
+function escapeHtml(s) {
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+}
+
+function shortId(id) {
+    if (!id || id.length <= 14) return id || ''
+    return id.slice(0, 6) + '…' + id.slice(-4)
+}
+
+// ── Device table ──────────────────────────────────────────────────────────
 
 class DeviceEntry {
     constructor(id, remoteState, parent) {
         this.id = id
         this.remoteState = remoteState
         this.row = document.createElement('tr')
-        this.updateDom()
+        this.row.title = id
         parent.appendChild(this.row)
+        this.updateDom()
     }
 
     destroy() {
@@ -57,48 +79,47 @@ class DeviceEntry {
     }
 
     updateDom() {
-        const children = []
-
-        let td = document.createElement('td')
-        td.innerHTML = `<code style="font-size:0.8rem">${escapeHtml(this.id)}</code>`
-        children.push(td)
-
-        td = document.createElement('td')
-        let model = escapeHtml(this.remoteState.model || '')
-        if (!this.remoteState.mapped) {
-            model += ` <i class="material-icons tooltipped tiny" data-position="bottom" data-tooltip="Not mapped to Home Assistant (unsupported modelId)" style="color:#f0b429">warning</i>`
-        }
-        td.innerHTML = model
-        children.push(td)
-
-        td = document.createElement('td')
-        td.innerText = this.remoteState.platform || ''
-        children.push(td)
-
-        td = document.createElement('td')
-        td.innerHTML = this.remoteState.mapped
+        const model = this.remoteState.model || '—'
+        const platform = this.remoteState.platform || '—'
+        const haChip = this.remoteState.mapped
             ? `<span class="chip chip-mapped">mapped</span>`
             : `<span class="chip chip-unmapped">raw</span>`
-        children.push(td)
 
-        td = document.createElement('td')
-        td.style = 'width: 9em'
-        td.innerHTML = `
-            <div class="switch">
-                <label>Off <input type="checkbox"> <span class="lever"></span>On</label>
-            </div>
-            <div class="hide preloader-wrapper verysmall active">
-                <div class="spinner-layer spinner-green-only">
-                <div class="circle-clipper left"><div class="circle"></div></div>
-                <div class="gap-patch"><div class="circle"></div></div>
-                <div class="circle-clipper right"><div class="circle"></div></div>
+        this.row.innerHTML = `
+            <td class="col-model">
+                <div>${escapeHtml(model)}${
+                    this.remoteState.mapped
+                        ? ''
+                        : ' <i class="material-icons tooltipped tiny" data-tooltip="Not mapped to HA" style="color:#f0b429;font-size:14px;vertical-align:middle">warning</i>'
+                }</div>
+                <div class="id-sub">${escapeHtml(shortId(this.id))}</div>
+            </td>
+            <td class="col-plat">${escapeHtml(platform)}</td>
+            <td class="col-ha">${haChip}</td>
+            <td class="col-bridge">
+                <div class="switch" style="display:inline-block">
+                    <label>Off <input type="checkbox"> <span class="lever"></span> On</label>
                 </div>
-            </div>`
-        children.push(td)
+                <div class="hide preloader-wrapper verysmall active" style="vertical-align:middle">
+                    <div class="spinner-layer spinner-green-only">
+                        <div class="circle-clipper left"><div class="circle"></div></div>
+                        <div class="gap-patch"><div class="circle"></div></div>
+                        <div class="circle-clipper right"><div class="circle"></div></div>
+                    </div>
+                </div>
+            </td>`
 
-        this.bridgeSwitch = td.getElementsByTagName('input')[0]
-        this.bridgeDiv = td.getElementsByClassName('switch')[0]
-        this.spinner = td.getElementsByClassName('preloader-wrapper')[0]
+        this.bridgeSwitch = this.row.querySelector('input[type=checkbox]')
+        this.bridgeDiv = this.row.querySelector('.switch')
+        this.spinner = this.row.querySelector('.preloader-wrapper')
+
+        // Whole-row select (except bridge switch)
+        this.row.onclick = (ev) => {
+            if (ev.target.closest('.switch') || ev.target.closest('input') || ev.target.closest('.lever')) {
+                return
+            }
+            selectDevice(this.id)
+        }
 
         const startBridge = async (deviceType) => {
             this.bridgeBusy = true
@@ -111,7 +132,6 @@ class DeviceEntry {
                 this.refreshUI()
             }
         }
-
         const stopBridge = async () => {
             this.bridgeBusy = true
             this.refreshUI()
@@ -124,7 +144,8 @@ class DeviceEntry {
             }
         }
 
-        this.bridgeSwitch.onchange = () => {
+        this.bridgeSwitch.onchange = (ev) => {
+            ev.stopPropagation()
             if (this.bridgeSwitch.checked) {
                 if (this.remoteState.deviceType) {
                     startBridge(this.remoteState.deviceType)
@@ -141,30 +162,15 @@ class DeviceEntry {
                 stopBridge()
             }
         }
+        this.bridgeSwitch.onclick = (ev) => ev.stopPropagation()
 
-        td = document.createElement('td')
-        td.style = 'white-space:nowrap'
-        td.innerHTML = `
-            <a class="btn-flat waves-effect white-text tooltipped" data-tooltip="Detail" data-action="detail"><i class="material-icons">info</i></a>
-            <a class="btn-flat waves-effect white-text tooltipped" data-tooltip="Monitor" href="monitor?id=${encodeURIComponent(this.id)}"><i class="material-icons">troubleshoot</i></a>`
-        td.querySelector('[data-action="detail"]').onclick = (ev) => {
-            ev.preventDefault()
-            selectDevice(this.id)
-        }
-        children.push(td)
-
-        this.row.replaceChildren(...children)
         Array.from(this.row.getElementsByClassName('tooltipped')).forEach((e) => M.Tooltip.init(e))
         this.refreshUI()
-
-        if (selectedDeviceId === this.id) {
-            this.row.style.background = 'rgba(61, 156, 240, 0.12)'
-        } else {
-            this.row.style.background = ''
-        }
+        this.row.classList.toggle('selected', selectedDeviceId === this.id)
     }
 
     refreshUI() {
+        if (!this.bridgeSwitch) return
         if (this.bridgeBusy) {
             this.bridgeDiv.classList.add('hide')
             this.spinner.classList.remove('hide')
@@ -177,14 +183,6 @@ class DeviceEntry {
     }
 }
 
-function escapeHtml(s) {
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-}
-
 function updateDevicesEmpty() {
     const empty = get('devices_empty')
     if (!empty) return
@@ -192,58 +190,202 @@ function updateDevicesEmpty() {
     else empty.classList.add('hide')
 }
 
+// ── Select device → monitor + decode ──────────────────────────────────────
+
 async function selectDevice(id) {
     selectedDeviceId = id
-    for (const d of Object.values(devices)) d.updateDom()
-    const placeholder = get('detail_placeholder')
-    const content = get('detail_content')
-    placeholder.classList.add('hide')
-    content.classList.remove('hide')
-    get('detail_monitor_link').href = `monitor?id=${encodeURIComponent(id)}`
+    for (const d of Object.values(devices)) {
+        d.row.classList.toggle('selected', d.id === id)
+    }
 
-    // Prefill decode modelId
+    const wb = get('workbench')
+    wb.classList.add('active')
+
     const local = devices[id]
-    if (local && local.remoteState.model) {
-        get('decode_model').value = local.remoteState.model
+    const model = (local && local.remoteState.model) || ''
+    get('decode_model').value = model
+    get('device_meta').textContent = `${model || '—'} · ${id}`
+    get('device_status').textContent = 'connecting…'
+    get('decode_source').textContent = ''
+
+    clearFrames()
+    connectDeviceWs(id)
+
+    // REST history (also arrives via WS history message)
+    try {
+        const res = await fetch(`${baseUrl}api/devices/${encodeURIComponent(id)}/frames`)
+        const data = await res.json()
+        if (data.ok && Array.isArray(data.frames) && data.frames.length) {
+            // Only seed if WS history hasn't already filled the list
+            if (get('messages').childElementCount === 0) {
+                for (const f of data.frames) {
+                    pushFrame(f.dir || 'rx', f.hex, f.injected, f.ts, true)
+                }
+            }
+        }
+    } catch (_) {
+        /* ignore */
     }
 
     try {
         const res = await fetch(`${baseUrl}api/devices/${encodeURIComponent(id)}`)
         const data = await res.json()
-        if (!data.ok) {
-            M.toast({ html: data.error || 'detail failed' })
-            return
+        if (data.ok) {
+            get('device_meta').textContent = `${data.modelId || model} · ${data.platform || ''} · ${
+                data.mapped ? 'HA mapped' : 'unmapped'
+            } · ${data.bridged ? 'bridged' : 'local'}`
+            if (data.modelId) get('decode_model').value = data.modelId
         }
-        const grid = get('detail_grid')
-        const fields = [
-            ['ID', data.id],
-            ['Model', data.modelId],
-            ['Name', data.modelName],
-            ['Platform', data.platform],
-            ['Device type', data.deviceType || '—'],
-            ['SW version', data.swVersion || '—'],
-            ['HA mapped', data.mapped ? 'yes' : 'no'],
-            ['Bridged', data.bridged ? 'yes' : 'no'],
-            ['HA MQTT', data.haConnected ? 'connected' : 'disconnected'],
-        ]
-        grid.innerHTML = fields
-            .map(
-                ([k, v]) =>
-                    `<div class="detail-item"><label>${escapeHtml(k)}</label><span>${escapeHtml(
-                        v == null ? '—' : String(v),
-                    )}</span></div>`,
-            )
-            .join('')
-    } catch (err) {
-        M.toast({ html: `detail error: ${err}` })
+    } catch (_) {
+        /* ignore */
     }
 }
 
-get('detail_refresh')?.addEventListener('click', () => {
-    if (selectedDeviceId) selectDevice(selectedDeviceId)
-})
+function deviceSocketUrl(id) {
+    const url = new URL('device', baseUrl)
+    url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    url.search = `?id=${encodeURIComponent(id)}`
+    return url
+}
 
-// ── RE decode / LLM export ────────────────────────────────────────────────
+function connectDeviceWs(id) {
+    clearTimeout(deviceReconnectTimer)
+    if (deviceWs) {
+        deviceWs.onclose = deviceWs.onopen = deviceWs.onmessage = null
+        try {
+            deviceWs.close()
+        } catch (_) {}
+        deviceWs = null
+    }
+
+    let retry = 250
+    const open = () => {
+        if (selectedDeviceId !== id) return
+        deviceWs = new WebSocket(deviceSocketUrl(id))
+        deviceWs.onopen = () => {
+            retry = 250
+            get('device_status').textContent = 'waiting…'
+        }
+        deviceWs.onclose = () => {
+            if (selectedDeviceId !== id) return
+            get('device_status').textContent = 'reconnecting…'
+            setInjectEnabled(false)
+            deviceReconnectTimer = setTimeout(open, retry)
+            retry = 5000
+        }
+        deviceWs.onmessage = (ev) => {
+            if (selectedDeviceId !== id) return
+            if (typeof ev.data !== 'string') return
+            let json
+            try {
+                json = JSON.parse(ev.data)
+            } catch {
+                return
+            }
+            if (Array.isArray(json.history)) {
+                // Prefer server history as baseline if list empty or only partial
+                clearFrames()
+                for (const f of json.history) {
+                    const dir = f.rx != null ? 'rx' : 'tx'
+                    const hex = f.rx != null ? f.rx : typeof f.tx === 'string' ? f.tx : JSON.stringify(f.tx)
+                    pushFrame(dir, hex, f.injected, f.ts, true)
+                }
+            }
+            if (json.rx != null) {
+                const hex = typeof json.rx === 'string' ? json.rx : JSON.stringify(json.rx)
+                pushFrame('rx', hex, json.injected, json.ts, false)
+            }
+            if (json.tx != null) {
+                const hex = typeof json.tx === 'string' ? json.tx : JSON.stringify(json.tx)
+                pushFrame('tx', hex, json.injected, json.ts, false)
+            }
+            if (json.status) {
+                get('device_status').textContent = json.status
+                setInjectEnabled(json.status === 'online')
+            }
+            if (json.meta && json.meta.modelId) {
+                get('decode_model').value = json.meta.modelId
+            }
+        }
+    }
+    open()
+}
+
+function setInjectEnabled(on) {
+    get('btn_send_to').disabled = !on
+    get('btn_send_from').disabled = !on
+}
+
+function clearFrames() {
+    get('messages').innerHTML = ''
+    selectedFrameEl = null
+}
+
+get('btn_clear_frames')?.addEventListener('click', clearFrames)
+
+function formatTs(ts) {
+    if (ts) {
+        try {
+            return new Date(ts).toLocaleTimeString()
+        } catch (_) {}
+    }
+    return new Date().toLocaleTimeString()
+}
+
+function pushFrame(dir, payload, injected, ts, fromHistory) {
+    const messages = get('messages')
+    const div = document.createElement('div')
+    div.className = `frame ${dir}${injected ? ' injected' : ''}`
+    const hex = String(payload)
+    div.dataset.hex = hex
+    div.dataset.dir = dir
+    div.innerHTML = `<span class="ts">${escapeHtml(formatTs(ts))}</span><span class="dir">${dir}</span>${escapeHtml(
+        hex.length > 220 ? hex.slice(0, 220) + '…' : hex,
+    )}`
+    div.onclick = () => loadFrameIntoDecoder(div, hex, dir)
+    messages.appendChild(div)
+    if (!fromHistory && get('autoscroll').checked) {
+        messages.scrollTop = messages.scrollHeight
+    }
+    return div
+}
+
+function loadFrameIntoDecoder(el, hex, dir) {
+    if (selectedFrameEl) selectedFrameEl.classList.remove('selected')
+    selectedFrameEl = el
+    el.classList.add('selected')
+
+    get('decode_hex').value = hex
+    get('decode_direction').value = dir === 'tx' ? 'toDevice' : 'fromDevice'
+    get('decode_source').textContent = `${dir} · ${hex.length} chars`
+    if (get('auto_decode').checked) {
+        runDecode()
+    }
+}
+
+// Inject
+get('btn_send_to').onclick = () => {
+    if (!deviceWs || deviceWs.readyState !== WebSocket.OPEN) return
+    let cmd = get('send_to').value.trim()
+    if (!cmd) return
+    if (cmd[0] === '{') {
+        try {
+            cmd = JSON.parse(cmd)
+        } catch {
+            M.toast({ html: 'invalid JSON' })
+            return
+        }
+    }
+    deviceWs.send(JSON.stringify({ sendToDevice: cmd }))
+}
+get('btn_send_from').onclick = () => {
+    if (!deviceWs || deviceWs.readyState !== WebSocket.OPEN) return
+    const hex = get('send_from').value.trim()
+    if (!hex) return
+    deviceWs.send(JSON.stringify({ sendFromDevice: hex }))
+}
+
+// ── Decode / LLM ──────────────────────────────────────────────────────────
 
 function renderDecode(data) {
     const body = get('tlv_body')
@@ -252,7 +394,7 @@ function renderDecode(data) {
     if (els.length === 0) {
         body.innerHTML = `<tr><td colspan="4" class="empty-state">No TLV elements (protocol=${escapeHtml(
             data.protocol || '?',
-        )}${data.aabbBody ? '; AABB body present' : ''})</td></tr>`
+        )}${data.aabbBody ? '; AABB body present — click export for notes' : ''})</td></tr>`
     } else {
         for (const el of els) {
             const tr = document.createElement('tr')
@@ -266,13 +408,20 @@ function renderDecode(data) {
         }
     }
     const sum = get('decode_summary')
-    sum.textContent = `protocol=${data.protocol || '?'} · direction=${data.direction || '?'} · unknowns=${
-        data.unknownCount ?? 0
-    }${data.crcOk == null ? '' : ' · crcOk=' + data.crcOk}${(data.notes || []).length ? ' · ' + data.notes.join('; ') : ''}`
+    const unk = data.unknownCount ?? 0
+    sum.innerHTML = `protocol=<b>${escapeHtml(data.protocol || '?')}</b> · dir=${escapeHtml(
+        data.direction || '?',
+    )} · unknowns=<b style="color:${unk ? 'var(--unknown)' : 'var(--ok)'}">${unk}</b>${
+        data.crcOk == null ? '' : ' · crcOk=' + data.crcOk
+    }${(data.notes || []).length ? ' · ' + escapeHtml(data.notes.join('; ')) : ''}`
 }
 
 async function runDecode() {
-    const hex = get('decode_hex').value
+    const hex = get('decode_hex').value.trim()
+    if (!hex) {
+        M.toast({ html: 'No hex to decode' })
+        return
+    }
     const direction = get('decode_direction').value
     const model_id = get('decode_model').value || undefined
     try {
@@ -293,7 +442,11 @@ async function runDecode() {
 }
 
 async function runExport() {
-    const hex = get('decode_hex').value
+    const hex = get('decode_hex').value.trim()
+    if (!hex) {
+        M.toast({ html: 'No hex to export' })
+        return
+    }
     const direction = get('decode_direction').value
     const model_id = get('decode_model').value || undefined
     try {
@@ -323,7 +476,7 @@ async function copyExport() {
     }
     try {
         await navigator.clipboard.writeText(text)
-        M.toast({ html: 'Copied LLM export to clipboard' })
+        M.toast({ html: 'Copied LLM export' })
     } catch {
         get('llm_export').select()
         document.execCommand('copy')
@@ -335,7 +488,7 @@ get('btn_decode')?.addEventListener('click', runDecode)
 get('btn_export_llm')?.addEventListener('click', runExport)
 get('btn_copy_export')?.addEventListener('click', copyExport)
 
-// ── WebSocket status ──────────────────────────────────────────────────────
+// ── Status WebSocket ──────────────────────────────────────────────────────
 
 let retryDelay = 250
 
@@ -345,14 +498,14 @@ function connect() {
         ws.onclose = ws.onopen = ws.onmessage = null
         try {
             ws.close()
-        } catch {}
+        } catch (_) {}
     }
     ws = new WebSocket(baseUrl + 'ws')
 
     ws.onclose = () => {
         get('status_rethink').innerHTML = STATUS_ERROR
         get('status_mqtt').innerHTML = STATUS_UNKNOWN
-        document.getElementsByTagName('body')[0].classList.add('offline')
+        document.body.classList.add('offline')
         reconnectTimer = setTimeout(connect, retryDelay)
         retryDelay = 5000
     }
@@ -360,7 +513,7 @@ function connect() {
     ws.onopen = () => {
         retryDelay = 250
         get('status_rethink').innerHTML = STATUS_OK
-        document.getElementsByTagName('body')[0].classList.remove('offline')
+        document.body.classList.remove('offline')
     }
 
     ws.onmessage = (ev) => {
@@ -371,29 +524,43 @@ function connect() {
         }
 
         if (typeof json.devices === 'object') {
-            let deletedDevices = Object.keys(devices).filter((id) => !json.devices[id])
-            deletedDevices.forEach((id) => {
-                devices[id].destroy()
-                delete devices[id]
-            })
+            Object.keys(devices)
+                .filter((id) => !json.devices[id])
+                .forEach((id) => {
+                    devices[id].destroy()
+                    delete devices[id]
+                    if (selectedDeviceId === id) {
+                        selectedDeviceId = null
+                        get('workbench').classList.remove('active')
+                        if (deviceWs) {
+                            try {
+                                deviceWs.close()
+                            } catch (_) {}
+                        }
+                    }
+                })
             for (const id in json.devices) {
                 const j = json.devices[id]
                 if (!devices[id]) devices[id] = new DeviceEntry(id, j, get('devices_body'))
                 else devices[id].update(j)
             }
             updateDevicesEmpty()
+            // Deep-link or re-select after list refresh
+            if (selectedDeviceId && devices[selectedDeviceId] && !get('workbench').classList.contains('active')) {
+                selectDevice(selectedDeviceId)
+            }
         }
 
         if (typeof json.bridge === 'object') {
             bridge_status = json.bridge.loggedIn
             if (json.bridge.loggedIn === true) {
-                document.getElementById('btn_thinq_login').classList.add('hide')
-                document.getElementById('btn_thinq_logout').classList.remove('hide')
+                get('btn_thinq_login').classList.add('hide')
+                get('btn_thinq_logout').classList.remove('hide')
                 get('status_bridge').innerHTML = STATUS_OK
                 get('status_bridge_text').innerText = 'Ok'
             } else {
-                document.getElementById('btn_thinq_login').classList.remove('hide')
-                document.getElementById('btn_thinq_logout').classList.add('hide')
+                get('btn_thinq_login').classList.remove('hide')
+                get('btn_thinq_logout').classList.add('hide')
                 get('status_bridge').innerHTML = STATUS_ERROR
                 get('status_bridge_text').innerText = 'Not configured'
             }
@@ -430,10 +597,6 @@ window.addEventListener('pageshow', (ev) => {
     if (ev.persisted) connect()
 })
 
-function get(id) {
-    return document.getElementById(id)
-}
-
 async function fetchWrapper(path, body, options) {
     if (options.method !== 'GET') {
         if (!options.headers) options.headers = {}
@@ -449,5 +612,19 @@ async function fetchWrapper(path, body, options) {
     }
 }
 
+// Deep-link: ?id=DEVICE still works (select on connect when device appears)
+const bootId = new URLSearchParams(window.location.search).get('id')
+if (bootId) {
+    // Will select once device list arrives; also open workbench early
+    selectedDeviceId = bootId
+}
+
 updateDevicesEmpty()
 connect()
+
+// After devices appear, apply boot selection
+const _origOnMsg = null
+// Poll once shortly after load for deep-link
+setTimeout(() => {
+    if (bootId && devices[bootId]) selectDevice(bootId)
+}, 800)

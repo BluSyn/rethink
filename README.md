@@ -105,17 +105,17 @@ No other crates need to change for a new model.
 
 ## Management
 
-A web interface is available on a user-defined port (default: **44401**). The modern panel supports:
+A web interface is available on a user-defined port (default: **44401**). The panel supports:
 
-- listing connected devices with HA mapping / bridge status
-- **per-device detail** (modelId, platform, device type, SW, bridge/HA flags)
-- packet **monitor** with injection (`monitor?id=…`)
-- **TLV decode** tools (`POST /api/decode`) with known-tag highlighting
-- **unknown-signal LLM export** (`POST /api/re/export`) — one-click copy of RE notes
-- TLV catalog (`GET /api/tlv/catalog`)
+- compact **connected-device** list (click a row to focus it)
+- integrated **live frame monitor** + inject (to/from device)
+- **recent frames** shown immediately (server ring buffer, not only live)
+- **TLV decode** side-by-side: click a frame to load/decode it; unknown tags highlighted
+- **LLM export** for unknowns (`POST /api/re/export`)
+- APIs: `GET /api/devices/{id}/frames`, `POST /api/decode`, `GET /api/tlv/catalog`
 - bridge mode login / per-device enable
 
-Health and device list also expose `GET /api/health` and `GET /api/devices`.
+Health and device list also expose `GET /api/health` and `GET /api/devices`. The old standalone `/monitor` page redirects into the main UI.
 
 ## Code (Rust entry points)
 

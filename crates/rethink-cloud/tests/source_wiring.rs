@@ -14,14 +14,18 @@ fn management_exposes_re_and_detail_routes() {
     assert!(mgmt.contains("classify_tlvs") || mgmt.contains("decode_hex_payload"));
 
     let index = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/index.html"));
-    assert!(index.contains("decode_hex") || index.contains("TLV decode"));
+    assert!(index.contains("decode_hex") || index.contains("TLV"));
     assert!(index.contains("llm_export") || index.contains("Export for LLM"));
-    assert!(index.contains("device_detail") || index.contains("Device detail"));
+    assert!(index.contains("workbench") || index.contains("Live frames"));
+    assert!(index.contains("messages"), "integrated monitor frame list");
 
     let panel = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/panel.js"));
     assert!(panel.contains("api/decode"));
     assert!(panel.contains("api/re/export"));
     assert!(panel.contains("api/devices/"));
+    assert!(panel.contains("frames") || panel.contains("loadFrameIntoDecoder"));
+    assert!(panel.contains("selectDevice"));
+    assert!(mgmt.contains("/frames") || mgmt.contains("api_device_frames") || mgmt.contains("FrameLog"));
 }
 
 #[test]

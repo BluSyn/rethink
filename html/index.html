@@ -21,14 +21,20 @@
                 --warn: #f0b429;
                 --err: #f07178;
                 --unknown: #ff8b3d;
+                --rx: #4a90a4;
+                --tx: #8b4a9c;
+            }
+            * {
+                box-sizing: border-box;
             }
             body {
                 background: var(--bg);
                 color: var(--text);
                 min-height: 100vh;
+                margin: 0;
             }
             body.offline .hide-when-offline {
-                display: none;
+                display: none !important;
             }
             nav {
                 background: linear-gradient(90deg, #152238, #1e3a5f) !important;
@@ -36,50 +42,109 @@
                 border-bottom: 1px solid var(--border);
             }
             .brand-logo {
-                font-size: 1.25rem !important;
+                font-size: 1.2rem !important;
                 display: flex !important;
                 align-items: center;
-                gap: 0.4rem;
+                gap: 0.35rem;
+            }
+            .page {
+                max-width: 1400px;
+                margin: 0 auto;
+                padding: 0.75rem 1rem 2rem;
             }
             .card-panel {
                 background: var(--card) !important;
                 border: 1px solid var(--border);
-                border-radius: 12px !important;
+                border-radius: 10px !important;
                 color: var(--text);
-            }
-            .status_field {
-                display: inline-block;
-                width: 1.5em;
+                padding: 0.75rem 1rem !important;
+                margin: 0 !important;
             }
             .status-row {
                 display: flex;
                 flex-wrap: wrap;
-                gap: 1rem;
-                margin-bottom: 0.5rem;
+                gap: 0.5rem;
+                align-items: center;
             }
             .status-pill {
                 display: inline-flex;
                 align-items: center;
-                gap: 0.35rem;
-                padding: 0.35rem 0.75rem;
+                gap: 0.3rem;
+                padding: 0.25rem 0.65rem;
                 border-radius: 999px;
                 background: #121a26;
                 border: 1px solid var(--border);
-                font-size: 0.92rem;
+                font-size: 0.85rem;
             }
-            table.highlight {
+            .status_field {
+                display: inline-block;
+                width: 1.25em;
+            }
+            .section-title {
+                color: var(--accent);
+                font-weight: 500;
+                font-size: 1rem;
+                margin: 0.85rem 0 0.4rem;
+            }
+            .section-title .hint {
+                color: var(--muted);
+                font-weight: 400;
+                font-size: 0.8rem;
+                margin-left: 0.5rem;
+            }
+            /* Compact device table */
+            table.devices {
+                width: 100%;
+                table-layout: fixed;
                 background: transparent;
+                margin: 0;
             }
-            table.highlight th {
+            table.devices th {
                 color: var(--muted);
                 border-bottom: 1px solid var(--border);
+                font-size: 0.75rem;
+                padding: 0.35rem 0.4rem;
+                font-weight: 500;
             }
-            table.highlight td {
-                border-radius: 0;
+            table.devices td {
                 border-bottom: 1px solid var(--border);
+                padding: 0.4rem;
+                font-size: 0.85rem;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+                vertical-align: middle;
             }
-            table.highlight tbody tr:hover {
+            table.devices tbody tr {
+                cursor: pointer;
+            }
+            table.devices tbody tr:hover {
                 background: rgba(61, 156, 240, 0.08);
+            }
+            table.devices tbody tr.selected {
+                background: rgba(61, 156, 240, 0.16);
+                outline: 1px solid rgba(61, 156, 240, 0.35);
+            }
+            table.devices .col-model {
+                width: 38%;
+            }
+            table.devices .col-plat {
+                width: 14%;
+            }
+            table.devices .col-ha {
+                width: 16%;
+            }
+            table.devices .col-bridge {
+                width: 32%;
+            }
+            .chip {
+                display: inline-block;
+                height: auto;
+                line-height: 1.3;
+                padding: 0.1rem 0.45rem;
+                border-radius: 4px;
+                font-size: 0.72rem;
+                margin: 0;
             }
             .chip-mapped {
                 background: rgba(61, 214, 140, 0.15);
@@ -89,30 +154,134 @@
                 background: rgba(240, 180, 41, 0.15);
                 color: var(--warn);
             }
-            .preloader-wrapper.verysmall {
-                width: 24px;
-                height: 24px;
-            }
-            .section-title {
-                color: var(--accent);
-                font-weight: 500;
-                margin-top: 1.5rem;
-            }
-            .detail-grid {
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-                gap: 0.75rem;
-            }
-            .detail-item label {
-                display: block;
+            .id-sub {
                 color: var(--muted);
-                font-size: 0.75rem;
-                text-transform: uppercase;
-                letter-spacing: 0.04em;
-            }
-            .detail-item span {
+                font-size: 0.7rem;
                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            }
+            .preloader-wrapper.verysmall {
+                width: 20px;
+                height: 20px;
+            }
+            /* Workbench: monitor + decode */
+            .workbench {
+                display: none;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.75rem;
+                margin-top: 0.5rem;
+                min-height: 420px;
+            }
+            .workbench.active {
+                display: grid;
+            }
+            @media (max-width: 900px) {
+                .workbench.active {
+                    grid-template-columns: 1fr;
+                }
+            }
+            .wb-panel {
+                display: flex;
+                flex-direction: column;
+                min-height: 0;
+                max-height: calc(100vh - 280px);
+            }
+            .wb-head {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 0.5rem;
+                margin-bottom: 0.5rem;
+            }
+            .wb-head .title {
+                font-weight: 500;
+                color: var(--accent);
+                flex: 1;
+                min-width: 120px;
+            }
+            .meta-line {
+                font-size: 0.8rem;
+                color: var(--muted);
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+            }
+            #messages {
+                flex: 1;
+                min-height: 180px;
+                overflow-y: auto;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 0.4rem;
+                background: #0c121a;
+                margin-bottom: 0.5rem;
+            }
+            .frame {
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 0.72rem;
+                padding: 0.3rem 0.45rem;
+                margin: 0.2rem 0;
+                border-radius: 5px;
+                cursor: pointer;
                 word-break: break-all;
+                border: 1px solid transparent;
+                line-height: 1.35;
+            }
+            .frame:hover {
+                border-color: var(--accent);
+            }
+            .frame.selected {
+                border-color: var(--accent);
+                box-shadow: 0 0 0 1px var(--accent);
+            }
+            .frame.rx {
+                background: rgba(74, 144, 164, 0.25);
+                border-left: 3px solid var(--rx);
+            }
+            .frame.tx {
+                background: rgba(139, 74, 156, 0.28);
+                border-left: 3px solid var(--tx);
+            }
+            .frame.injected {
+                outline: 1px dashed var(--err);
+            }
+            .frame .ts {
+                color: var(--muted);
+                margin-right: 0.4rem;
+                font-size: 0.68rem;
+            }
+            .frame .dir {
+                font-weight: 600;
+                margin-right: 0.35rem;
+                text-transform: uppercase;
+                font-size: 0.68rem;
+            }
+            .frame.rx .dir {
+                color: #7ec8db;
+            }
+            .frame.tx .dir {
+                color: #d4a0e0;
+            }
+            .inject-row {
+                display: flex;
+                gap: 0.35rem;
+                margin-top: 0.3rem;
+                align-items: center;
+            }
+            .inject-row input {
+                flex: 1;
+                background: #0c121a !important;
+                color: var(--text) !important;
+                border: 1px solid var(--border) !important;
+                border-radius: 6px;
+                padding: 0.35rem 0.5rem;
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 0.75rem;
+                height: 2rem !important;
+                margin: 0 !important;
+            }
+            .inject-row .btn {
+                height: 2rem;
+                line-height: 2rem;
+                padding: 0 0.75rem;
+                font-size: 0.75rem;
             }
             textarea.re-input,
             #llm_export {
@@ -120,14 +289,33 @@
                 color: var(--text) !important;
                 border: 1px solid var(--border) !important;
                 border-radius: 8px;
-                min-height: 110px;
                 font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-                font-size: 0.85rem;
-                padding: 0.75rem;
+                font-size: 0.78rem;
+                padding: 0.5rem;
+                width: 100%;
+                margin: 0;
+            }
+            #decode_hex {
+                min-height: 64px;
+                resize: vertical;
             }
             #llm_export {
-                min-height: 200px;
+                min-height: 100px;
                 white-space: pre-wrap;
+            }
+            .tlv-table {
+                width: 100%;
+                font-size: 0.78rem;
+            }
+            .tlv-table th {
+                color: var(--muted);
+                border-bottom: 1px solid var(--border);
+                padding: 0.25rem 0.3rem;
+            }
+            .tlv-table td {
+                padding: 0.2rem 0.3rem;
+                border-bottom: 1px solid var(--border);
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
             }
             .tlv-table td.unknown {
                 color: var(--unknown);
@@ -136,9 +324,14 @@
             .tlv-table td.known {
                 color: var(--ok);
             }
+            .tlv-scroll {
+                max-height: 160px;
+                overflow-y: auto;
+                margin: 0.4rem 0;
+            }
             .btn,
             .btn-flat {
-                border-radius: 8px;
+                border-radius: 6px;
                 text-transform: none;
             }
             .btn.teal {
@@ -146,6 +339,12 @@
             }
             .btn.blue {
                 background: var(--accent) !important;
+            }
+            .btn-small {
+                height: 1.9rem;
+                line-height: 1.9rem;
+                padding: 0 0.7rem;
+                font-size: 0.78rem;
             }
             .modal {
                 background: var(--card);
@@ -168,21 +367,47 @@
             }
             .helper {
                 color: var(--muted);
-                font-size: 0.9rem;
-            }
-            .layout-two {
-                display: grid;
-                grid-template-columns: 1.2fr 1fr;
-                gap: 1rem;
-            }
-            @media (max-width: 992px) {
-                .layout-two {
-                    grid-template-columns: 1fr;
-                }
+                font-size: 0.8rem;
             }
             .empty-state {
                 color: var(--muted);
-                padding: 1rem 0;
+                padding: 0.5rem 0;
+                font-size: 0.85rem;
+            }
+            .decode-actions {
+                display: flex;
+                gap: 0.35rem;
+                flex-wrap: wrap;
+                margin: 0.4rem 0;
+            }
+            .switch label {
+                color: var(--muted);
+                font-size: 0.75rem;
+            }
+            .switch label input[type='checkbox']:checked + .lever {
+                background-color: rgba(61, 156, 240, 0.45);
+            }
+            .switch label input[type='checkbox']:checked + .lever:after {
+                background-color: var(--accent);
+            }
+            select {
+                color: var(--text);
+                background: #0c121a;
+                border: 1px solid var(--border);
+                border-radius: 6px;
+                height: 2rem;
+                font-size: 0.8rem;
+            }
+            .field-row {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 0.4rem;
+                margin: 0.35rem 0;
+            }
+            .field-row label {
+                display: block;
+                font-size: 0.72rem;
+                margin-bottom: 0.15rem;
             }
         </style>
     </head>
@@ -197,8 +422,7 @@
             </div>
         </nav>
 
-        <div class="container" style="padding-bottom: 3rem">
-            <h5 class="section-title">Connectivity</h5>
+        <div class="page">
             <div class="card-panel">
                 <div class="status-row">
                     <div class="status-pill">
@@ -211,132 +435,132 @@
                         <span id="status_bridge" class="status_field"></span>
                         Bridge: <span id="status_bridge_text">Unknown</span>
                     </div>
-                </div>
-                <div class="hide-when-offline" style="margin-top: 0.75rem">
-                    <button
-                        id="btn_thinq_login"
-                        class="hide btn waves-effect waves-light modal-trigger blue"
-                        data-target="thinq_login"
-                    >
-                        Log into LG account <i class="material-icons right">login</i>
-                    </button>
-                    <button
-                        id="btn_thinq_logout"
-                        class="hide btn waves-effect waves-light modal-trigger tooltipped"
-                        data-target="thinq_logout"
-                        data-position="bottom"
-                        data-tooltip="Disables bridge mode for all devices."
-                    >
-                        Logout <i class="material-icons right">logout</i>
-                    </button>
+                    <span class="hide-when-offline" style="margin-left: auto; display: inline-flex; gap: 0.35rem">
+                        <button
+                            id="btn_thinq_login"
+                            class="hide btn btn-small waves-effect waves-light modal-trigger blue"
+                            data-target="thinq_login"
+                        >
+                            Log into LG
+                        </button>
+                        <button
+                            id="btn_thinq_logout"
+                            class="hide btn btn-small waves-effect waves-light modal-trigger tooltipped"
+                            data-target="thinq_logout"
+                            data-position="bottom"
+                            data-tooltip="Disables bridge mode for all devices."
+                        >
+                            Logout
+                        </button>
+                    </span>
                 </div>
             </div>
 
-            <div class="hide-when-offline layout-two">
-                <div>
-                    <h5 class="section-title">Connected devices</h5>
-                    <div class="card-panel" style="padding: 0.5rem 1rem 1rem">
-                        <table class="highlight">
-                            <thead>
-                                <tr>
-                                    <th>ID</th>
-                                    <th>Model</th>
-                                    <th>Platform</th>
-                                    <th>HA</th>
-                                    <th>Bridge</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody id="devices_body"></tbody>
-                        </table>
-                        <p id="devices_empty" class="empty-state hide">
-                            No appliances connected yet. Point SoftAP setup at rethink and power-cycle the device.
-                        </p>
-                        <p class="helper">
-                            Wiki:
-                            <a
-                                href="https://github.com/anszom/rethink/wiki/Installing-rethink%E2%80%90cloud#step-5-configure-your-device"
-                                target="_blank"
-                                rel="noopener"
-                                >connect a device</a
-                            >
-                            · Research:
-                            <code>docs/research/THINQ2_RESEARCH.md</code>
-                        </p>
-                    </div>
-
-                    <h5 class="section-title">Device detail</h5>
-                    <div class="card-panel" id="device_detail_panel">
-                        <p class="empty-state" id="detail_placeholder">
-                            Select a device to inspect model, platform, mapping, and open the packet monitor.
-                        </p>
-                        <div id="detail_content" class="hide">
-                            <div class="detail-grid" id="detail_grid"></div>
-                            <div style="margin-top: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap">
-                                <a id="detail_monitor_link" class="btn blue waves-effect" href="#">
-                                    <i class="material-icons left">troubleshoot</i> Open monitor
-                                </a>
-                                <button id="detail_refresh" class="btn-flat waves-effect white-text">
-                                    Refresh
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+            <div class="hide-when-offline">
+                <h5 class="section-title">
+                    Connected devices
+                    <span class="hint">click a row to monitor &amp; decode</span>
+                </h5>
+                <div class="card-panel">
+                    <table class="devices highlight">
+                        <thead>
+                            <tr>
+                                <th class="col-model">Model</th>
+                                <th class="col-plat">Platform</th>
+                                <th class="col-ha">HA</th>
+                                <th class="col-bridge">Bridge</th>
+                            </tr>
+                        </thead>
+                        <tbody id="devices_body"></tbody>
+                    </table>
+                    <p id="devices_empty" class="empty-state hide">
+                        No appliances connected. SoftAP-setup a device toward rethink, then power-cycle it.
+                    </p>
                 </div>
 
-                <div>
-                    <h5 class="section-title">TLV decode &amp; reverse engineering</h5>
-                    <div class="card-panel">
-                        <p class="helper">
-                            Paste a hex capture (MQTT UART, raw TLV body, or AABB). Unknown tags are highlighted and
-                            can be copied as LLM-ready RE notes.
-                        </p>
-                        <label for="decode_hex">Packet hex</label>
-                        <textarea id="decode_hex" class="re-input materialize-textarea" rows="4" placeholder="000004000000a7… or AA…BB"></textarea>
-                        <div class="row" style="margin-bottom: 0">
-                            <div class="input-field col s6">
+                <div id="workbench" class="workbench">
+                    <!-- Live frames -->
+                    <div class="card-panel wb-panel">
+                        <div class="wb-head">
+                            <span class="title">Live frames</span>
+                            <span id="device_status" class="meta-line">—</span>
+                            <label style="display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.75rem">
+                                <input type="checkbox" id="autoscroll" checked style="opacity: 1; pointer-events: auto; position: static" />
+                                auto-scroll
+                            </label>
+                            <button id="btn_clear_frames" class="btn-flat btn-small white-text">Clear</button>
+                        </div>
+                        <div class="meta-line" id="device_meta">Select a device above</div>
+                        <div id="messages"></div>
+                        <div class="helper">Click a frame to load it into the TLV decoder →</div>
+                        <div class="inject-row">
+                            <input id="send_to" type="text" placeholder="hex → device" spellcheck="false" />
+                            <button id="btn_send_to" class="btn btn-small blue" disabled>To dev</button>
+                        </div>
+                        <div class="inject-row">
+                            <input id="send_from" type="text" placeholder="hex inject as from-device" spellcheck="false" />
+                            <button id="btn_send_from" class="btn btn-small teal" disabled>From dev</button>
+                        </div>
+                    </div>
+
+                    <!-- TLV decode -->
+                    <div class="card-panel wb-panel">
+                        <div class="wb-head">
+                            <span class="title">TLV / packet decode</span>
+                            <span id="decode_source" class="meta-line"></span>
+                        </div>
+                        <label for="decode_hex" class="helper">Packet hex</label>
+                        <textarea
+                            id="decode_hex"
+                            class="re-input"
+                            rows="3"
+                            placeholder="Click a live frame, or paste hex…"
+                            spellcheck="false"
+                        ></textarea>
+                        <div class="field-row">
+                            <div>
+                                <label for="decode_direction">Direction</label>
                                 <select id="decode_direction">
-                                    <option value="fromDevice" selected>fromDevice</option>
-                                    <option value="toDevice">toDevice</option>
+                                    <option value="fromDevice" selected>fromDevice (rx)</option>
+                                    <option value="toDevice">toDevice (tx)</option>
                                 </select>
-                                <label>Direction hint</label>
                             </div>
-                            <div class="input-field col s6">
-                                <input id="decode_model" type="text" placeholder="e.g. HUM_056905_WW" />
-                                <label for="decode_model" class="active">modelId (optional)</label>
+                            <div>
+                                <label for="decode_model">modelId</label>
+                                <input id="decode_model" type="text" placeholder="auto from device" style="height:2rem;margin:0;font-size:0.8rem" />
                             </div>
                         </div>
-                        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0 1rem">
-                            <button id="btn_decode" class="btn teal waves-effect">
-                                <i class="material-icons left">code</i> Decode
-                            </button>
-                            <button id="btn_export_llm" class="btn blue waves-effect">
-                                <i class="material-icons left">smart_toy</i> Export for LLM
-                            </button>
-                            <button id="btn_copy_export" class="btn-flat waves-effect white-text">
-                                <i class="material-icons left">content_copy</i> Copy export
-                            </button>
+                        <div class="decode-actions">
+                            <button id="btn_decode" class="btn btn-small teal waves-effect">Decode</button>
+                            <button id="btn_export_llm" class="btn btn-small blue waves-effect">Export for LLM</button>
+                            <button id="btn_copy_export" class="btn-flat btn-small white-text">Copy export</button>
+                            <label style="display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; margin-left: auto">
+                                <input type="checkbox" id="auto_decode" checked style="opacity: 1; pointer-events: auto; position: static" />
+                                auto-decode on frame click
+                            </label>
                         </div>
                         <div id="decode_summary" class="helper"></div>
-                        <table class="highlight tlv-table" id="tlv_table">
-                            <thead>
-                                <tr>
-                                    <th>Tag</th>
-                                    <th>Name</th>
-                                    <th>Value</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tlv_body"></tbody>
-                        </table>
-                        <label for="llm_export" style="margin-top: 1rem; display: block">LLM export</label>
-                        <textarea id="llm_export" readonly placeholder="Unknown-signal export appears here…"></textarea>
+                        <div class="tlv-scroll">
+                            <table class="tlv-table" id="tlv_table">
+                                <thead>
+                                    <tr>
+                                        <th>Tag</th>
+                                        <th>Name</th>
+                                        <th>Value</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tlv_body"></tbody>
+                            </table>
+                        </div>
+                        <label for="llm_export" class="helper">LLM export</label>
+                        <textarea id="llm_export" readonly placeholder="Unknown tags / RE notes…"></textarea>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- modals (bridge login) -->
+        <!-- modals -->
         <div id="thinq_login" class="modal">
             <div class="modal-content">
                 <h4>Log into your LG ThinQ account</h4>
@@ -346,20 +570,12 @@
                 </p>
                 <div class="row">
                     <div class="input-field col s9">
-                        <input
-                            id="country_code"
-                            type="text"
-                            class="validate"
-                            minlength="2"
-                            maxlength="2"
-                            pattern="[A-Za-z]{2}"
-                            required
-                        />
+                        <input id="country_code" type="text" class="validate" minlength="2" maxlength="2" pattern="[A-Za-z]{2}" required />
                         <label for="country_code">Country code</label>
                     </div>
                     <div class="input-field col s3">
                         <button type="button" class="btn waves-effect waves-light" id="btn_thinq_login_continue">
-                            Log in <i class="material-icons right">login</i>
+                            Log in
                         </button>
                     </div>
                 </div>
@@ -385,9 +601,7 @@
             <div class="modal-content">
                 <h4>Logout confirmation</h4>
                 <p>Logging out will disable bridge mode for all your devices.</p>
-                <button class="btn waves-effect waves-light" id="btn_thinq_logout_continue">
-                    Log out <i class="material-icons right">logout</i>
-                </button>
+                <button class="btn waves-effect waves-light" id="btn_thinq_logout_continue">Log out</button>
             </div>
             <div class="modal-footer">
                 <a href="#!" class="modal-close waves-effect waves-green btn-flat">Cancel</a>
@@ -397,9 +611,7 @@
         <div id="devicetype_query" class="modal">
             <div class="modal-content">
                 <h4>Select device type</h4>
-                <p>
-                    Three-digit device type from setup. The device only registers with ThinQ cloud if this is correct.
-                </p>
+                <p>Three-digit device type from setup. Required for ThinQ cloud registration.</p>
                 <div class="row">
                     <div class="input-field col s9">
                         <input type="text" id="devtype-input" class="autocomplete validate" minlength="3" required />
