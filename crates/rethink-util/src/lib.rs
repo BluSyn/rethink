@@ -8,6 +8,7 @@ pub mod length_prefixed_frame;
 pub mod mtosp;
 pub mod packet_codec;
 pub mod tlv;
+pub mod tlv_catalog;
 
 pub use crc16::crc16;
 pub use packet_codec::{decode_packet, encode_packet, Decoded, Direction, EncodeInput, Protocol};
