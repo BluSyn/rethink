@@ -579,34 +579,33 @@ async fn api_device_detail(
     .into_response()
 }
 
-/// Pure helpers exposed for unit tests (same path as HTTP handlers).
-pub fn re_decode_for_test(hex: &str, direction: Option<&str>) -> Result<Value, String> {
-    decode_hex_payload(hex, direction)
-}
-
-pub fn re_export_for_test(hex: &str, model_id: Option<&str>) -> Result<String, String> {
-    let decoded = decode_hex_payload(hex, Some("fromDevice"))?;
-    let items: Vec<(u16, u32)> = decoded
-        .get("elements")
-        .and_then(|e| e.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|el| {
-                    let t = el.get("t")?.as_u64()? as u16;
-                    let v = el.get("v")?.as_u64()? as u32;
-                    Some((t, v))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let classified = classify_tlvs(&items);
-    let h = decoded.get("hex").and_then(|x| x.as_str()).unwrap_or(hex);
-    Ok(llm_export_text(model_id, Some("fromDevice"), h, &classified))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn re_decode_for_test(hex: &str, direction: Option<&str>) -> Result<Value, String> {
+        decode_hex_payload(hex, direction)
+    }
+
+    fn re_export_for_test(hex: &str, model_id: Option<&str>) -> Result<String, String> {
+        let decoded = decode_hex_payload(hex, Some("fromDevice"))?;
+        let items: Vec<(u16, u32)> = decoded
+            .get("elements")
+            .and_then(|e| e.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|el| {
+                        let t = el.get("t")?.as_u64()? as u16;
+                        let v = el.get("v")?.as_u64()? as u32;
+                        Some((t, v))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let classified = classify_tlvs(&items);
+        let h = decoded.get("hex").and_then(|x| x.as_str()).unwrap_or(hex);
+        Ok(llm_export_text(model_id, Some("fromDevice"), h, &classified))
+    }
 
     #[test]
     fn decode_known_tlv_query_style() {
