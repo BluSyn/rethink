@@ -14,6 +14,7 @@ use rethink_bridge::Bridge;
 use rethink_core::ha::HaConnection;
 use rethink_util::packet_codec::{decode_packet, Decoded, Direction};
 use rethink_util::tlv;
+use rethink_util::aabb_analysis::{aabb_export_text, analyze_aabb_body};
 use rethink_util::tlv_catalog::{classify_tlvs, llm_export_text, KNOWN_TAGS};
 use rethink_util::uart_binary::{analyze_uart_binary, uart_binary_export_text};
 use serde::Deserialize;
@@ -582,7 +583,25 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
             protocol = "Aabb".into();
             aabb_body = Some(a.body.clone());
             crc_ok = Some(a.checksum_ok);
-            notes.push("AABB frame; body hex in aabbBody".into());
+            let body_bytes = hex::decode(&a.body).unwrap_or_default();
+            let analysis =
+                analyze_aabb_body(&body_bytes, bytes.len(), a.length, Some(a.checksum_ok));
+            if let Some(k) = analysis.kind {
+                notes.push(format!(
+                    "kind=0x{k:02x} type={} body_len={}",
+                    analysis
+                        .frame_type
+                        .map(|t| format!("0x{t:02x}"))
+                        .unwrap_or_else(|| "—".into()),
+                    analysis.body_len
+                ));
+            } else {
+                notes.push(format!("AABB body_len={}", analysis.body_len));
+            }
+            if let Some(phase) = analysis.fields.iter().find(|f| f.name == "phase") {
+                notes.push(format!("phase={}", phase.interpretation));
+            }
+            binary_analysis = Some(serde_json::to_value(&analysis).unwrap_or(json!({})));
         }
         Decoded::Unknown(u) => {
             notes.push(format!("packet_codec: {}", u.reason));
@@ -728,6 +747,64 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
         .get("protocol")
         .and_then(|p| p.as_str())
         .unwrap_or("");
+
+    // AABB fixed-layout frames (dryer/washer/fridge) — not TLV.
+    if protocol == "Aabb" {
+        let text = if let Some(ba) = decoded
+            .get("binaryAnalysis")
+            .filter(|v| !v.is_null())
+        {
+            // Re-analyze from body for stable text (same pattern as UartBinary)
+            if let Some(body_hex) = ba.get("body_hex").and_then(|v| v.as_str()) {
+                let raw = hex::decode(body_hex).unwrap_or_default();
+                let len_byte = ba
+                    .get("length_byte")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u8;
+                let packet_len = ba
+                    .get("packet_len")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(hex.len() as u64 / 2) as usize;
+                let csum = ba.get("checksum_ok").and_then(|v| v.as_bool());
+                let analysis = analyze_aabb_body(&raw, packet_len, len_byte, csum);
+                aabb_export_text(
+                    body.model_id.as_deref(),
+                    body.direction.as_deref(),
+                    hex,
+                    &analysis,
+                )
+            } else if let Some(body_h) = decoded.get("aabbBody").and_then(|v| v.as_str()) {
+                let raw = hex::decode(body_h).unwrap_or_default();
+                let analysis = analyze_aabb_body(&raw, hex.len() / 2, 0, None);
+                aabb_export_text(
+                    body.model_id.as_deref(),
+                    body.direction.as_deref(),
+                    hex,
+                    &analysis,
+                )
+            } else {
+                format!("# ThinQ AABB frame\nhex: {hex}\n")
+            }
+        } else if let Some(body_h) = decoded.get("aabbBody").and_then(|v| v.as_str()) {
+            let raw = hex::decode(body_h).unwrap_or_default();
+            let analysis = analyze_aabb_body(&raw, hex.len() / 2, 0, None);
+            aabb_export_text(
+                body.model_id.as_deref(),
+                body.direction.as_deref(),
+                hex,
+                &analysis,
+            )
+        } else {
+            format!("# ThinQ AABB frame\nhex: {hex}\n")
+        };
+        return Json(json!({
+            "ok": true,
+            "text": text,
+            "unknownCount": 0,
+            "decode": decoded,
+        }))
+        .into_response();
+    }
 
     // Binary UART: prefer structured heuristic export over empty TLV export.
     // Note: JSON null for binaryAnalysis is still Some(Value::Null) — filter it out.

@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', function () {
 })
 
 /** Bump when sequence-export / decode UI changes so you can confirm the binary embeds this file. */
-const PANEL_UI_REV = 'dhum-a8-layout'
+const PANEL_UI_REV = 'aabb-decode'
 
 document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('panel_ui_rev')
@@ -879,6 +879,48 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0, sigFirstIndex)
             return { lines, tagSig: binSig }
         }
 
+        // AABB fixed-layout (dryer/washer/fridge) — never use empty-TLV same-as
+        if (p === 'Aabb' || p === 'AABB') {
+            const bodyHex = (dec.aabbBody || (ba && ba.body_hex) || '').toLowerCase()
+            const aabbSig = `aabb:${bodyHex || hex}`
+            const parts = [`protocol=Aabb${crc}`]
+            if (ba && ba.kind != null) {
+                parts.push(`kind=0x${Number(ba.kind).toString(16).padStart(2, '0')}`)
+            }
+            if (ba && ba.frame_type != null) {
+                parts.push(`type=0x${Number(ba.frame_type).toString(16).padStart(2, '0')}`)
+            }
+            if (ba && ba.kind_label) parts.push(`(${ba.kind_label})`)
+            if (ba && ba.body_len != null) parts.push(`body_len=${ba.body_len}`)
+            lines.push(parts.join(' '))
+            lines.push(`hex: ${hex}`)
+            if (sigFirstIndex && sigFirstIndex.has(aabbSig)) {
+                lines.push(`body: (same as #${sigFirstIndex.get(aabbSig)})`)
+            } else {
+                if (bodyHex) lines.push(`body: ${bodyHex}`)
+                else lines.push('body: (empty)')
+                const fields = (ba && ba.fields) || []
+                if (fields.length) {
+                    lines.push(
+                        'fields: ' +
+                            fields
+                                .map(
+                                    (f) =>
+                                        `${f.name}=${f.raw}${
+                                            f.interpretation ? ` (${f.interpretation})` : ''
+                                        }`,
+                                )
+                                .join(' · '),
+                    )
+                } else if (ba && ba.frame_type_label) {
+                    lines.push(`frame: ${ba.frame_type_label}`)
+                }
+                if (sigFirstIndex) sigFirstIndex.set(aabbSig, index)
+            }
+            lines.push('')
+            return { lines, tagSig: aabbSig }
+        }
+
         // TLV / other
         const meta = [`protocol=${p}${crc}`]
         if (env) {
@@ -1247,6 +1289,37 @@ function renderDecode(data) {
     const body = get('tlv_body')
     body.innerHTML = ''
     const els = data.elements || []
+    if (data.protocol === 'Aabb' || data.protocol === 'AABB') {
+        const ba = data.binaryAnalysis || {}
+        const fields = ba.fields || []
+        if (fields.length) {
+            body.innerHTML = ''
+            for (const f of fields) {
+                const tr = document.createElement('tr')
+                tr.innerHTML = `
+                    <td><code>+${f.offset}</code></td>
+                    <td>${escapeHtml(f.name || '—')}</td>
+                    <td><code>${escapeHtml(String(f.raw))}</code></td>
+                    <td class="${f.confidence === 'high' ? 'known' : 'unknown'}">${escapeHtml(
+                        f.interpretation || f.confidence || '',
+                    )}</td>`
+                body.appendChild(tr)
+            }
+        } else {
+            body.innerHTML = `<tr><td colspan="4" class="empty-state">
+                <b>AABB</b> — fixed layout (not TLV).
+                kind=${ba.kind != null ? '0x' + Number(ba.kind).toString(16) : '?'}
+                type=${ba.frame_type != null ? '0x' + Number(ba.frame_type).toString(16) : '?'}
+                · ${escapeHtml(ba.kind_label || '')} ${escapeHtml(ba.frame_type_label || '')}
+                · body=${ba.body_len || '?'}B — see text breakdown.
+            </td></tr>`
+        }
+        get('decode_summary').innerHTML = `protocol=<b>Aabb</b> · ${escapeHtml(
+            ba.kind_label || '',
+        )} ${escapeHtml(ba.frame_type_label || '')} · fields=${fields.length}`
+        renderPayloadView(data.hex || get('decode_hex').value, null)
+        return
+    }
     if (data.protocol === 'UartBinary') {
         const ba = data.binaryAnalysis || {}
         const env = ba.envelope || {}

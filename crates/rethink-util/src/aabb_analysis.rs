@@ -1,0 +1,321 @@
+//! Structured analysis of AABB (0xAA…0xBB) fixed-layout packets.
+//!
+//! Envelope is device-agnostic; body layouts are per product family.
+//! Dryer/washer status (kind 0x30) follows the RH10V9 / laundry pattern used
+//! by `rh10v9_ch` and related handlers.
+
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AabbField {
+    pub name: &'static str,
+    pub offset: usize,
+    pub width: u8,
+    pub raw: u32,
+    pub interpretation: String,
+    pub confidence: &'static str,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AabbAnalysis {
+    pub packet_len: usize,
+    pub length_byte: u8,
+    pub checksum_ok: Option<bool>,
+    pub body_hex: String,
+    pub body_len: usize,
+    /// First body byte when present (device family / product class).
+    pub kind: Option<u8>,
+    /// Second body byte: command/status subtype (F0, EB, EC, …).
+    pub frame_type: Option<u8>,
+    pub kind_label: String,
+    pub frame_type_label: String,
+    pub fields: Vec<AabbField>,
+    pub re_notes: Vec<String>,
+}
+
+fn dryer_phase_name(phase: u8) -> &'static str {
+    match phase {
+        0x00 => "Off",
+        0x01 => "Initial",
+        0x03 => "Pause",
+        0x04 => "End",
+        0x32 => "Drying",
+        0x33 => "Cooling",
+        _ => "unknown",
+    }
+}
+
+fn kind_label(kind: u8) -> String {
+    match kind {
+        0x10 => "fridge family".into(),
+        0x20 => "washer/laundry status family".into(),
+        0x30 => "dryer status family (RH10 / heat-pump)".into(),
+        0x43 => "hood family".into(),
+        0xf0 => "host command (F0…)".into(),
+        _ => format!("unclassified kind 0x{kind:02x}"),
+    }
+}
+
+fn frame_type_label(ft: u8) -> String {
+    match ft {
+        0xeb => "single status (EB)".into(),
+        0xec => "dual status prev+cur (EC)".into(),
+        0xed => "command tail (ED, often with F0)".into(),
+        0x31 => "ack/ignore subtype (0x31)".into(),
+        _ => format!("subtype 0x{ft:02x}"),
+    }
+}
+
+/// Parse one 27-byte dryer status record (as in RH10V9_CH).
+fn dryer_record_fields(rec: &[u8], base: usize, label: &str) -> Vec<AabbField> {
+    if rec.len() < 27 {
+        return Vec::new();
+    }
+    let phase = rec[2];
+    let remaining_min = rec[0] as u32 * 60 + rec[1] as u32;
+    let flags = rec[17] as u32;
+    let b21 = rec[21] as u32;
+    let phase_name = dryer_phase_name(phase);
+    vec![
+        AabbField {
+            name: "remaining_time_min",
+            offset: base,
+            width: 2,
+            raw: remaining_min,
+            interpretation: format!("{label} remaining ≈ {remaining_min} min (rec[0]*60+rec[1])"),
+            confidence: "high",
+        },
+        AabbField {
+            name: "phase",
+            offset: base + 2,
+            width: 1,
+            raw: phase as u32,
+            interpretation: format!("{label} phase 0x{phase:02x} = {phase_name}"),
+            confidence: "high",
+        },
+        AabbField {
+            name: "flags",
+            offset: base + 17,
+            width: 1,
+            raw: flags,
+            interpretation: format!("{label} flags byte = {flags}"),
+            confidence: "medium",
+        },
+        AabbField {
+            name: "raw_b21",
+            offset: base + 21,
+            width: 1,
+            raw: b21,
+            interpretation: format!("{label} diagnostic byte21 = {b21}"),
+            confidence: "low",
+        },
+    ]
+}
+
+/// Analyze an AABB body (bytes between AA/len and checksum/BB).
+pub fn analyze_aabb_body(
+    body: &[u8],
+    packet_len: usize,
+    length_byte: u8,
+    checksum_ok: Option<bool>,
+) -> AabbAnalysis {
+    let kind = body.first().copied();
+    let frame_type = body.get(1).copied();
+    let mut fields = Vec::new();
+    let mut re_notes = vec![
+        "AABB: AA | len | body | checksum | BB (checksum = sum(bytes incl AA) mod 256 xor 0x55)."
+            .into(),
+    ];
+
+    let (kl, ftl) = match (kind, frame_type) {
+        (Some(k), Some(ft)) => (kind_label(k), frame_type_label(ft)),
+        (Some(k), None) => (kind_label(k), "—".into()),
+        _ => ("empty body".into(), "—".into()),
+    };
+
+    // Host command F0 ED … (monitor enable / set)
+    if body.len() >= 2 && body[0] == 0xf0 {
+        fields.push(AabbField {
+            name: "command",
+            offset: 0,
+            width: body.len().min(10) as u8,
+            raw: u32::from_be_bytes([
+                body.get(0).copied().unwrap_or(0),
+                body.get(1).copied().unwrap_or(0),
+                body.get(2).copied().unwrap_or(0),
+                body.get(3).copied().unwrap_or(0),
+            ]),
+            interpretation: format!(
+                "host command body {} (dryer monitor-enable often F0ED1121010000001800)",
+                hex::encode(body)
+            ),
+            confidence: "high",
+        });
+        if body == hex_decode_static("f0ed1121010000001800") {
+            fields.push(AabbField {
+                name: "command_name",
+                offset: 0,
+                width: 10,
+                raw: 0,
+                interpretation: "RH10/laundry monitor-enable poll (every ~15s from handler)".into(),
+                confidence: "high",
+            });
+        }
+        re_notes.push("TX F0… commands are host→device; pair with following EB/EC status RX.".into());
+    }
+
+    // Dryer family 0x30
+    if body.len() >= 2 && body[0] == 0x30 {
+        let ft = body[1];
+        const REC: usize = 27;
+        if ft == 0xeb && body.len() == 2 + REC {
+            fields.extend(dryer_record_fields(&body[2..], 2, "status"));
+            re_notes.push("0x30 EB: single 27-byte dryer status record (RH10V9_CH layout).".into());
+        } else if ft == 0xec && body.len() == 2 + 2 * REC {
+            fields.extend(dryer_record_fields(&body[2..2 + REC], 2, "prev"));
+            fields.extend(dryer_record_fields(
+                &body[2 + REC..2 + 2 * REC],
+                2 + REC,
+                "cur",
+            ));
+            re_notes.push(
+                "0x30 EC: dual status (prev + cur records); handlers often use the second."
+                    .into(),
+            );
+        } else if ft == 0x31 {
+            re_notes.push("0x30 0x31: ignored/ack-like on RH10 handler.".into());
+        } else {
+            re_notes.push(format!(
+                "0x30 subtype 0x{ft:02x} len={} — not the standard 27-byte EB/EC layout.",
+                body.len()
+            ));
+        }
+    }
+
+    // Washer family 0x20 — note only (layout model-specific)
+    if body.first() == Some(&0x20) {
+        re_notes.push(
+            "kind 0x20 laundry/washer family — see washer handlers for field maps.".into(),
+        );
+    }
+
+    AabbAnalysis {
+        packet_len,
+        length_byte,
+        checksum_ok,
+        body_hex: hex::encode(body),
+        body_len: body.len(),
+        kind,
+        frame_type,
+        kind_label: kl,
+        frame_type_label: ftl,
+        fields,
+        re_notes,
+    }
+}
+
+fn hex_decode_static(s: &str) -> Vec<u8> {
+    hex::decode(s).unwrap_or_default()
+}
+
+/// Compact AABB breakdown for text export / multi-frame paste.
+pub fn aabb_export_text(
+    model_id: Option<&str>,
+    direction: Option<&str>,
+    full_hex: &str,
+    analysis: &AabbAnalysis,
+) -> String {
+    let mut out = String::from("# ThinQ AABB frame\n");
+    if let Some(m) = model_id {
+        out.push_str(&format!("modelId: {m}\n"));
+    }
+    if let Some(d) = direction {
+        out.push_str(&format!("direction: {d}\n"));
+    }
+    out.push_str(&format!(
+        "packet_len={} length_byte={} body_len={}\n",
+        analysis.packet_len, analysis.length_byte, analysis.body_len
+    ));
+    if let Some(c) = analysis.checksum_ok {
+        out.push_str(&format!("checksum_ok: {c}\n"));
+    }
+    if let Some(k) = analysis.kind {
+        out.push_str(&format!(
+            "kind=0x{k:02x} ({}) type={} ({})\n",
+            analysis.kind_label,
+            analysis
+                .frame_type
+                .map(|t| format!("0x{t:02x}"))
+                .unwrap_or_else(|| "—".into()),
+            analysis.frame_type_label
+        ));
+    }
+    out.push_str(&format!("hex: {full_hex}\n"));
+    out.push_str(&format!("body: {}\n", analysis.body_hex));
+    if !analysis.fields.is_empty() {
+        out.push_str("fields:\n");
+        for f in &analysis.fields {
+            out.push_str(&format!(
+                "  {} +{} = {} — {}\n",
+                f.name, f.offset, f.raw, f.interpretation
+            ));
+        }
+    }
+    if !analysis.re_notes.is_empty() {
+        out.push_str("notes:\n");
+        for n in &analysis.re_notes {
+            out.push_str(&format!("  - {n}\n"));
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn analyzes_rh10_monitor_enable() {
+        let body = hex::decode("f0ed1121010000001800").unwrap();
+        let a = analyze_aabb_body(&body, 14, 0x0e, Some(true));
+        assert_eq!(a.kind, Some(0xf0));
+        assert!(a.fields.iter().any(|f| f.interpretation.contains("monitor-enable")));
+        let t = aabb_export_text(Some("RH10V9_CH"), Some("toDevice"), "aa0e…", &a);
+        assert!(t.contains("AABB"));
+        assert!(t.contains("monitor-enable") || t.contains("F0"));
+    }
+
+    #[test]
+    fn analyzes_rh10_single_status_off() {
+        // body from live capture #3
+        let body = hex::decode(
+            "30eb001900000000000000000000000000000000000000000000007500",
+        )
+        .unwrap();
+        assert_eq!(body.len(), 29);
+        let a = analyze_aabb_body(&body, 33, 0x21, Some(true));
+        assert_eq!(a.kind, Some(0x30));
+        assert_eq!(a.frame_type, Some(0xeb));
+        let phase = a.fields.iter().find(|f| f.name == "phase").unwrap();
+        assert_eq!(phase.raw, 0);
+        assert!(phase.interpretation.contains("Off"));
+        let rem = a.fields.iter().find(|f| f.name == "remaining_time_min").unwrap();
+        assert_eq!(rem.raw, 25); // 0*60+0x19
+        let t = aabb_export_text(Some("RH10V9_CH"), Some("fromDevice"), "aa21…", &a);
+        assert!(t.contains("fields:"));
+        assert!(t.contains("Off"));
+    }
+
+    #[test]
+    fn analyzes_rh10_dual_status() {
+        let body = hex::decode(
+            "30ec001900000000000000000000000000000000000000000000007500001900000000000000000000000000000000000000000000007500",
+        )
+        .unwrap();
+        assert_eq!(body.len(), 56);
+        let a = analyze_aabb_body(&body, 60, 0x3c, Some(true));
+        assert_eq!(a.frame_type, Some(0xec));
+        assert!(a.fields.iter().any(|f| f.interpretation.contains("prev")));
+        assert!(a.fields.iter().any(|f| f.interpretation.contains("cur")));
+    }
+}
