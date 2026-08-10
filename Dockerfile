@@ -65,8 +65,10 @@ COPY crates ./crates
 COPY html ./html
 
 # Ensure cargo treats our sources as newer than the dummy stubs.
-RUN find crates html -type f \( -name '*.rs' -o -name '*.html' -o -name '*.js' -o -name '*.toml' \) \
-      -exec touch {} +
+RUN find crates html -type f \( \
+        -name '*.rs' -o -name '*.html' -o -name '*.js' -o -name '*.css' \
+        -o -name '*.woff2' -o -name '*.toml' \
+      \) -exec touch {} +
 
 # Rebuild only workspace packages; dependency objects remain from layer A.
 RUN cargo build --release \

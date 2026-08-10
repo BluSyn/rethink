@@ -19,6 +19,55 @@ fn management_exposes_re_and_detail_routes() {
     assert!(index.contains("workbench") || index.contains("Live frames"));
     assert!(index.contains("messages"), "integrated monitor frame list");
     assert!(index.contains("detail_bar"), "selected device detail bar");
+    // Management UI must be offline-capable: no Google Fonts / CDN call-outs.
+    assert!(
+        index.contains("vendor/materialize.min.css") && index.contains("vendor/materialize.min.js"),
+        "Materialize must be loaded from local vendor/"
+    );
+    assert!(
+        index.contains("vendor/material-icons.css"),
+        "Material Icons CSS must be local"
+    );
+    assert!(
+        !index.contains("fonts.googleapis.com")
+            && !index.contains("fonts.gstatic.com")
+            && !index.contains("cdnjs.cloudflare.com")
+            && !index.contains("cdn.jsdelivr.net"),
+        "index.html must not load fonts/libs from the public internet"
+    );
+    let icons_css = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../html/vendor/material-icons.css"
+    ));
+    assert!(
+        icons_css.contains("MaterialIcons-Regular.woff2"),
+        "icon font file must be referenced locally"
+    );
+    assert!(
+        !icons_css.contains("http://") && !icons_css.contains("https://"),
+        "material-icons.css must not reference remote URLs"
+    );
+    assert!(
+        std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../html/vendor/MaterialIcons-Regular.woff2"
+        ))
+        .is_file(),
+        "Material Icons woff2 must be vendored"
+    );
+    assert!(
+        std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../html/vendor/materialize.min.js"
+        ))
+        .is_file()
+            && std::path::Path::new(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../html/vendor/materialize.min.css"
+            ))
+            .is_file(),
+        "Materialize assets must be vendored"
+    );
 
     let panel = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/panel.js"));
     assert!(panel.contains("api/re/export"));
