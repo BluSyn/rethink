@@ -77,7 +77,7 @@ document.addEventListener('DOMContentLoaded', function () {
 })
 
 /** Bump when sequence-export / decode UI changes so you can confirm the binary embeds this file. */
-const PANEL_UI_REV = 'delta-skip-query'
+const PANEL_UI_REV = 'aabb-fields-clean'
 
 document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('panel_ui_rev')
@@ -977,12 +977,32 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0, sigFirstIndex)
                     lines.push(
                         'fields: ' +
                             fields
-                                .map(
-                                    (f) =>
-                                        `${f.name}=${f.raw}${
-                                            f.interpretation ? ` (${f.interpretation})` : ''
-                                        }`,
-                                )
+                                .map((f) => {
+                                    // Command labels: interpretation only (no bogus u32 raw)
+                                    if (
+                                        f.name === 'monitor_enable' ||
+                                        f.name === 'command'
+                                    ) {
+                                        return `${f.name}: ${f.interpretation || ''}`
+                                    }
+                                    // Status: name=value with short interpretation when useful
+                                    const interp = f.interpretation || ''
+                                    if (
+                                        f.name === 'phase' &&
+                                        interp &&
+                                        !String(interp).startsWith(String(f.raw))
+                                    ) {
+                                        return `${f.name}=${f.raw} (${interp})`
+                                    }
+                                    if (f.name === 'remaining_min') {
+                                        return `${f.name}=${f.raw}${
+                                            interp && interp.includes('residual')
+                                                ? ' (residual while Off)'
+                                                : ' min'
+                                        }`
+                                    }
+                                    return `${f.name}=${f.raw}`
+                                })
                                 .join(' · '),
                     )
                 } else if (ba && ba.frame_type_label) {

@@ -76,13 +76,23 @@ fn dryer_record_fields(rec: &[u8], base: usize, label: &str) -> Vec<AabbField> {
     let flags = rec[17] as u32;
     let b21 = rec[21] as u32;
     let phase_name = dryer_phase_name(phase);
+    let prefix = if label == "status" {
+        String::new()
+    } else {
+        format!("{label} ")
+    };
+    let rem_note = if phase == 0 && remaining_min > 0 {
+        format!("{remaining_min} min (non-zero while Off — residual/display)")
+    } else {
+        format!("{remaining_min} min")
+    };
     vec![
         AabbField {
-            name: "remaining_time_min",
+            name: "remaining_min",
             offset: base,
             width: 2,
             raw: remaining_min,
-            interpretation: format!("{label} remaining ≈ {remaining_min} min (rec[0]*60+rec[1])"),
+            interpretation: format!("{prefix}{rem_note}"),
             confidence: "high",
         },
         AabbField {
@@ -90,7 +100,7 @@ fn dryer_record_fields(rec: &[u8], base: usize, label: &str) -> Vec<AabbField> {
             offset: base + 2,
             width: 1,
             raw: phase as u32,
-            interpretation: format!("{label} phase 0x{phase:02x} = {phase_name}"),
+            interpretation: format!("{prefix}0x{phase:02x} {phase_name}"),
             confidence: "high",
         },
         AabbField {
@@ -98,15 +108,15 @@ fn dryer_record_fields(rec: &[u8], base: usize, label: &str) -> Vec<AabbField> {
             offset: base + 17,
             width: 1,
             raw: flags,
-            interpretation: format!("{label} flags byte = {flags}"),
+            interpretation: format!("{prefix}{flags}"),
             confidence: "medium",
         },
         AabbField {
-            name: "raw_b21",
+            name: "b21",
             offset: base + 21,
             width: 1,
             raw: b21,
-            interpretation: format!("{label} diagnostic byte21 = {b21}"),
+            interpretation: format!("{prefix}{b21}"),
             confidence: "low",
         },
     ]
@@ -135,30 +145,24 @@ pub fn analyze_aabb_body(
 
     // Host command F0 ED … (monitor enable / set)
     if body.len() >= 2 && body[0] == 0xf0 {
-        fields.push(AabbField {
-            name: "command",
-            offset: 0,
-            width: body.len().min(10) as u8,
-            raw: u32::from_be_bytes([
-                body.get(0).copied().unwrap_or(0),
-                body.get(1).copied().unwrap_or(0),
-                body.get(2).copied().unwrap_or(0),
-                body.get(3).copied().unwrap_or(0),
-            ]),
-            interpretation: format!(
-                "host command body {} (dryer monitor-enable often F0ED1121010000001800)",
-                hex::encode(body)
-            ),
-            confidence: "high",
-        });
+        let hx = hex::encode(body);
         if body == hex_decode_static("f0ed1121010000001800") {
             fields.push(AabbField {
-                name: "command_name",
+                name: "monitor_enable",
                 offset: 0,
                 width: 10,
-                raw: 0,
-                interpretation: "RH10/laundry monitor-enable poll (every ~15s from handler)".into(),
+                raw: 1,
+                interpretation: "RH10/laundry poll (F0ED1121010000001800) ~15s".into(),
                 confidence: "high",
+            });
+        } else {
+            fields.push(AabbField {
+                name: "command",
+                offset: 0,
+                width: body.len().min(16) as u8,
+                raw: 0,
+                interpretation: format!("host F0 command {hx}"),
+                confidence: "medium",
             });
         }
         re_notes.push("TX F0… commands are host→device; pair with following EB/EC status RX.".into());
@@ -255,10 +259,15 @@ pub fn aabb_export_text(
     if !analysis.fields.is_empty() {
         out.push_str("fields:\n");
         for f in &analysis.fields {
-            out.push_str(&format!(
-                "  {} +{} = {} — {}\n",
-                f.name, f.offset, f.raw, f.interpretation
-            ));
+            // Prefer human interpretation; include raw when it is the primary value
+            if matches!(f.name, "monitor_enable" | "command") {
+                out.push_str(&format!("  {}: {}\n", f.name, f.interpretation));
+            } else {
+                out.push_str(&format!(
+                    "  {}=+{} raw={} · {}\n",
+                    f.name, f.offset, f.raw, f.interpretation
+                ));
+            }
         }
     }
     if !analysis.re_notes.is_empty() {
@@ -279,10 +288,11 @@ mod tests {
         let body = hex::decode("f0ed1121010000001800").unwrap();
         let a = analyze_aabb_body(&body, 14, 0x0e, Some(true));
         assert_eq!(a.kind, Some(0xf0));
-        assert!(a.fields.iter().any(|f| f.interpretation.contains("monitor-enable")));
+        assert!(a.fields.iter().any(|f| f.name == "monitor_enable"));
         let t = aabb_export_text(Some("RH10V9_CH"), Some("toDevice"), "aa0e…", &a);
         assert!(t.contains("AABB"));
-        assert!(t.contains("monitor-enable") || t.contains("F0"));
+        assert!(t.contains("monitor_enable"));
+        assert!(!t.contains("4042068257"));
     }
 
     #[test]
@@ -299,8 +309,9 @@ mod tests {
         let phase = a.fields.iter().find(|f| f.name == "phase").unwrap();
         assert_eq!(phase.raw, 0);
         assert!(phase.interpretation.contains("Off"));
-        let rem = a.fields.iter().find(|f| f.name == "remaining_time_min").unwrap();
+        let rem = a.fields.iter().find(|f| f.name == "remaining_min").unwrap();
         assert_eq!(rem.raw, 25); // 0*60+0x19
+        assert!(rem.interpretation.contains("residual") || rem.interpretation.contains("25"));
         let t = aabb_export_text(Some("RH10V9_CH"), Some("fromDevice"), "aa21…", &a);
         assert!(t.contains("fields:"));
         assert!(t.contains("Off"));
