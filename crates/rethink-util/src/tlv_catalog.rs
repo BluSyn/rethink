@@ -19,8 +19,9 @@ pub static KNOWN_TAGS: &[KnownTag] = &[
     KnownTag { id: 0x1fd, name: "current_temp_half_c", family: "climate" },
     KnownTag { id: 0x1fe, name: "setpoint_temp_half_c", family: "climate" },
     KnownTag { id: 0x253, name: "target_humidity", family: "humidity" },
-    // RAC/CST: wire value is RH×10 (900 → 90.0%)
-    KnownTag { id: 0x336, name: "current_humidity_x10", family: "humidity" },
+    // RAC/CST: often RH×10 (900 → 90%). DHUM: RH percent (60 → 60%).
+    // Panel hint: wire ≥200 → treat as ×10; else percent.
+    KnownTag { id: 0x336, name: "current_humidity", family: "humidity" },
     KnownTag { id: 0x2da, name: "eeprom_checksum", family: "caps" },
     KnownTag { id: 0x2cc, name: "feature_bits_2cc", family: "caps" },
     KnownTag { id: 0x2cd, name: "feature_bits_2cd", family: "caps" },

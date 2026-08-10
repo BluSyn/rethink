@@ -31,3 +31,15 @@ Every appliance→cloud byte stream is potentially meaningful. Climate **TLV** i
 - Documented offset/type/unit for ≥1 useful field
 - Diff test or capture fixture in-repo
 - Optional HA entity only if user-facing value exists
+
+## Decoded families
+
+### DHUM `0xa8` / 73-byte body (2026-08-10)
+
+| Offset | Type | Meaning | Confidence |
+|--------|------|---------|------------|
+| +4 | u8 | sequence | high |
+| +44 | u8 half-°C | ambient (= TLV 0x1fd) | high |
+| +45 | u8 % | RH (= TLV 0x336 on DHUM) | high |
+
+Implemented in `uart_binary::dhum_a8_layout_fields`. Multi-frame UI emits **Binary body diffs** for same-length successive bodies.

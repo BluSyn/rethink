@@ -43,25 +43,34 @@ This is a normal ThinQ2 climate **values** push. Known tags match the shipped ha
 
 ---
 
-## Frame B — **not** climate TLV
+## Frame B / stream — kind **0xa8** binary (73 B body)
 
 ```
-kind=0xa8  b5=0x66  b6=0x10  b7=0x01  body_len=73
-CRC valid (XMODEM over UART body).
+kind=0xa8  b5=0x66|0x67  b6=0x0d|0x10  body_len=73
 ```
 
-| Field | Meaning |
-|-------|---------|
-| kind **0xa8** | Not 0x87/0xa7/0x65 climate path |
-| b5 **0x66** | In wiki “SUPERSET” band (0x03–0x66), not values b5=0x02 |
-| b6 **0x10** | On 0x87 path wiki calls this **ACK-like**; here with 0xa8 it is a **binary/private payload** class |
-| Body | Fixed-layout blob (sensor/log/filter?), **not** 10-bit TLV |
+Not climate TLV. Long capture **2026-08-10** (~91 min, 71× binary + sparse TLV) maps the body:
 
-The management UI previously fell through to **TlvRaw** and invented tags like `0x000`, `0x004` — **decode noise**. Treat as `UartBinary`.
+| Body offset | Wire sample | Meaning | Confidence |
+|-------------|-------------|---------|------------|
+| **+4** | 0x35…0x7b | Stream **sequence** ( +1 each push) | **High** |
+| **+3** | 0x0d / 0x10 | Subtype; often mirrors envelope **b6** | Medium |
+| **+44** | 64/66/62 | **Ambient half-°C** (= TLV **0x1fd**) | **High** (≈90% concurrent match; lags by 1 frame) |
+| **+45** | 60 / 65 | **RH %** (= TLV **0x336** on DHUM) | **High** |
+| **+29 / +33** | 0x30… | Slow paired counters (minutes-scale) | Medium |
+| **+69…+71** | 6b6ce0→6e6fe3 | Slow multi-byte drift | Low–med |
 
-Body contains byte pairs that *look* like humidity/temp (`0x36 0x50` ≈ half-°C 54 and RH 80) but **without TLV framing**; do not map them as tags until the private layout is documented.
+Envelope:
 
-Δt to frame A was **~23 minutes** — not a tight state transition; do not use that delta to claim A’s unknowns “became” B’s garbage tags.
+| Field | Notes |
+|-------|--------|
+| b5 **0x66 / 0x67** | SUPERSET/private band |
+| b6 **0x0d** | Periodic sensor stream (interleaved with sparse 0xa7 values) |
+| b6 **0x10** | Alternate/snapshot variant (same layout; +3 often 0x10) |
+
+### 0x336 scale on DHUM
+
+Wire **60–65** is **percent RH**, not ×10. (RAC/CST often use 900 → 90%.) HA already treats 0x336 as raw humidity for this model. Sparse timeline must not divide by 10 when wire &lt; 200.
 
 ---
 

@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', function () {
 })
 
 /** Bump when sequence-export / decode UI changes so you can confirm the binary embeds this file. */
-const PANEL_UI_REV = '931e13a-seq'
+const PANEL_UI_REV = 'dhum-a8-layout'
 
 document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('panel_ui_rev')
@@ -847,6 +847,8 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0, sigFirstIndex)
                       : dec.aabbBody
                         ? Math.floor(String(dec.aabbBody).length / 2)
                         : 0
+            const bodyHex = (dec.aabbBody || (ba && ba.body_hex) || '').toLowerCase()
+            const binSig = `bin:${bodyHex || hex}`
             const parts = [`protocol=UartBinary${crc}`]
             if (k != null) parts.push(`kind=0x${Number(k).toString(16).padStart(2, '0')}`)
             if (b5 != null) parts.push(`b5=0x${Number(b5).toString(16).padStart(2, '0')}`)
@@ -854,11 +856,27 @@ function formatFrameCompact(index, decoded, payload, dir, ts, t0, sigFirstIndex)
             parts.push(`body_len=${blen}`)
             lines.push(parts.join(' '))
             lines.push(`hex: ${hex}`)
-            const bodyHex = dec.aabbBody || (ba && ba.body_hex) || ''
-            if (bodyHex) lines.push(`body: ${bodyHex}`)
-            else lines.push('body: (empty)')
+            if (sigFirstIndex && sigFirstIndex.has(binSig)) {
+                lines.push(`body: (same as #${sigFirstIndex.get(binSig)})`)
+            } else {
+                if (bodyHex) {
+                    lines.push(`body: ${bodyHex}`)
+                    // Structured high-confidence fields from server analysis
+                    const hits = (ba && ba.heuristics) || []
+                    const high = hits.filter((h) => h.confidence === 'high' && h.width > 0)
+                    if (high.length) {
+                        lines.push(
+                            'fields: ' +
+                                high
+                                    .map((h) => `+${h.offset}=${h.raw} (${h.interpretation})`)
+                                    .join(' · '),
+                        )
+                    }
+                } else lines.push('body: (empty)')
+                if (sigFirstIndex) sigFirstIndex.set(binSig, index)
+            }
             lines.push('')
-            return { lines, tagSig: null }
+            return { lines, tagSig: binSig }
         }
 
         // TLV / other
@@ -906,8 +924,58 @@ function formatTagValueHint(e) {
     const v = Number(e.v)
     const base = formatOneTag(e)
     if (t === 0x1fd || t === 0x1fe) return `${base} → ${(v / 2).toFixed(1)}°C`
-    if (t === 0x336) return `${base} → ${(v / 10).toFixed(1)}% RH`
+    // RAC/CST often RH×10 (≥200); DHUM uses percent (30–100).
+    if (t === 0x336) {
+        if (v >= 200) return `${base} → ${(v / 10).toFixed(1)}% RH`
+        return `${base} → ${v}% RH`
+    }
     return base
+}
+
+/**
+ * Diff successive UartBinary bodies of same length — compact offset changes.
+ * Highlights DHUM 0xa8 ambient/RH when present.
+ */
+function formatBinaryBodyDiffs(decodedList, ordered, t0) {
+    const rows = []
+    let prev = null
+    decodedList.forEach((d, i) => {
+        if (d.kind !== 'hex' || !d.decode || d.decode.protocol !== 'UartBinary') return
+        const bodyHex = (
+            d.decode.aabbBody ||
+            (d.decode.binaryAnalysis && d.decode.binaryAnalysis.body_hex) ||
+            ''
+        ).toLowerCase()
+        if (!bodyHex || bodyHex.length % 2) return
+        const body = []
+        for (let c = 0; c < bodyHex.length; c += 2) body.push(parseInt(bodyHex.slice(c, c + 2), 16))
+        const ts = parseTsMs(ordered[i])
+        const rel = t0 != null && ts != null ? `+${ts - t0}ms` : '?'
+        if (!prev || prev.body.length !== body.length) {
+            prev = { index: i + 1, body }
+            return
+        }
+        const ch = []
+        for (let o = 0; o < body.length; o++) {
+            if (body[o] !== prev.body[o]) {
+                let note = `+${o}: ${prev.body[o]}→${body[o]}`
+                if (o === 44)
+                    note += ` (${(prev.body[o] / 2).toFixed(1)}→${(body[o] / 2).toFixed(1)}°C)`
+                if (o === 45) note += ` (${prev.body[o]}→${body[o]}% RH)`
+                if (o === 4) note += ' seq'
+                ch.push(note)
+            }
+        }
+        if (ch.length) {
+            rows.push(`#${prev.index}→#${i + 1} ${rel} ${ch.join(' · ')}`)
+        }
+        prev = { index: i + 1, body }
+    })
+    if (!rows.length) return []
+    // Cap very long streams
+    const max = 40
+    const shown = rows.length > max ? rows.slice(0, max).concat([`… (${rows.length - max} more diffs)`]) : rows
+    return ['## Binary body diffs', ...shown, '']
 }
 
 /**
@@ -1062,6 +1130,7 @@ async function runMultiFrameBreakdown(ordered) {
         })
 
         lines.push(...formatSparseValuesTimeline(decodedList, ordered, t0))
+        lines.push(...formatBinaryBodyDiffs(decodedList, ordered, t0))
 
         // TLV delta: prefer full values-frame pairs (more tags) with actual changes.
         let best = null

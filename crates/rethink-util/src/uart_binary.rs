@@ -26,7 +26,7 @@ pub fn kind_hint(kind: u8) -> &'static str {
 pub fn b5_hint(b5: u8) -> &'static str {
     match b5 {
         0x01 | 0x02 => "standard values/query band (with climate kinds)",
-        0x03..=0x66 => "wiki SUPERSET band (non-standard body layouts common)",
+        0x03..=0x67 => "SUPERSET/private band (non-TLV body; DHUM 0xa8 uses 0x66/0x67)",
         0xf0..=0xf9 => "wiki extended-TLV / special path band",
         0xfd => "private command / filter-style path (with matching b6)",
         _ => "see TLVProtocol wiki byte5 notes",
@@ -38,9 +38,85 @@ pub fn b6_hint(b6: u8) -> &'static str {
         0x01 => "often query / ACK-related on climate path",
         0x02 => "often command path on climate path",
         0x04 => "often values push (fromDevice climate)",
-        0x10 => "ACK-like on some paths; with non-TLV kind may mean binary reply",
+        0x0d => "DHUM 0xa8 periodic sensor stream (paired with ambient TLV)",
+        0x10 => "ACK-like on climate; on 0xa8 = alternate/snapshot binary subtype",
         _ => "model-specific",
     }
+}
+
+/// DHUM kind=0xa8 fixed 73-byte body — fields proven vs concurrent climate TLV.
+///
+/// Long capture (2026-08-10, ~91 min, 71 binary frames): body[+44] tracks 0x1fd
+/// (half-°C ambient), body[+45] tracks 0x336 (RH % on DHUM), body[+4] increments
+/// every push (sequence).
+pub fn dhum_a8_layout_fields(body: &[u8]) -> Vec<HeuristicHit> {
+    if body.len() < 46 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    if body.len() > 4 {
+        out.push(HeuristicHit {
+            offset: 4,
+            width: 1,
+            endian: "u8",
+            raw: body[4] as u32,
+            interpretation: "stream sequence (increments each 0xa8 push)".into(),
+            confidence: "high",
+        });
+    }
+    if body.len() > 3 {
+        out.push(HeuristicHit {
+            offset: 3,
+            width: 1,
+            endian: "u8",
+            raw: body[3] as u32,
+            interpretation: format!(
+                "body subtype 0x{:02x} (0x0d≈periodic stream, 0x10≈snapshot; often mirrors envelope b6)",
+                body[3]
+            ),
+            confidence: "medium",
+        });
+    }
+    let amb = body[44];
+    out.push(HeuristicHit {
+        offset: 44,
+        width: 1,
+        endian: "u8",
+        raw: amb as u32,
+        interpretation: format!(
+            "ambient half-°C → {:.1} °C (tracks TLV 0x1fd)",
+            amb as f64 / 2.0
+        ),
+        confidence: "high",
+    });
+    let rh = body[45];
+    out.push(HeuristicHit {
+        offset: 45,
+        width: 1,
+        endian: "u8",
+        raw: rh as u32,
+        interpretation: format!("relative humidity {rh}% (tracks DHUM TLV 0x336; not ×10)"),
+        confidence: "high",
+    });
+    if body.len() > 33 {
+        out.push(HeuristicHit {
+            offset: 29,
+            width: 1,
+            endian: "u8",
+            raw: body[29] as u32,
+            interpretation: "slow counter A (steps with +33; minutes-scale)".into(),
+            confidence: "medium",
+        });
+        out.push(HeuristicHit {
+            offset: 33,
+            width: 1,
+            endian: "u8",
+            raw: body[33] as u32,
+            interpretation: "slow counter B (paired with +29)".into(),
+            confidence: "medium",
+        });
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -99,8 +175,26 @@ pub fn analyze_uart_binary(
     let unique = hist.iter().filter(|&&c| c > 0).count();
 
     let mut heuristics = Vec::new();
-    // Half-degree temps: wire 32–80 → 16–40 °C
+    let mut known_offsets = std::collections::HashSet::new();
+
+    // Proven layouts first (high confidence)
+    if kind == 0xa8 && body.len() == 73 {
+        for h in dhum_a8_layout_fields(body) {
+            known_offsets.insert(h.offset);
+            if h.width > 1 {
+                for o in 0..h.width as usize {
+                    known_offsets.insert(h.offset + o);
+                }
+            }
+            heuristics.push(h);
+        }
+    }
+
+    // Generic low-confidence scan — skip offsets already explained by layout
     for (i, &b) in body.iter().enumerate() {
+        if known_offsets.contains(&i) {
+            continue;
+        }
         if (32..=80).contains(&b) {
             let c = b as f64 / 2.0;
             heuristics.push(HeuristicHit {
@@ -112,7 +206,6 @@ pub fn analyze_uart_binary(
                 confidence: "low",
             });
         }
-        // Humidity % for DHUM-style 0–100
         if (20..=100).contains(&b) && b % 5 == 0 {
             heuristics.push(HeuristicHit {
                 offset: i,
@@ -124,9 +217,11 @@ pub fn analyze_uart_binary(
             });
         }
     }
-    // u16 LE / BE scans for humidity×10 (200–1000) and filter-like counters
     if body.len() >= 2 {
         for i in 0..body.len() - 1 {
+            if known_offsets.contains(&i) {
+                continue;
+            }
             let le = u16::from_le_bytes([body[i], body[i + 1]]) as u32;
             let be = u16::from_be_bytes([body[i], body[i + 1]]) as u32;
             for (raw, endian) in [(le, "u16le"), (be, "u16be")] {
@@ -137,7 +232,7 @@ pub fn analyze_uart_binary(
                         endian,
                         raw,
                         interpretation: format!(
-                            "plausible RH×10 → {:.1}% (like CST TLV 0x336)",
+                            "plausible RH×10 → {:.1}% (CST-style 0x336)",
                             raw as f64 / 10.0
                         ),
                         confidence: "low",
@@ -149,16 +244,14 @@ pub fn analyze_uart_binary(
                         width: 2,
                         endian,
                         raw,
-                        interpretation: format!(
-                            "counter-scale value (filter hours / runtime / energy?)"
-                        ),
+                        interpretation: "counter-scale value (filter hours / runtime / energy?)"
+                            .into(),
                         confidence: "low",
                     });
                 }
             }
         }
     }
-    // Cap heuristic noise
     if heuristics.len() > 40 {
         heuristics.truncate(40);
         heuristics.push(HeuristicHit {
@@ -173,20 +266,25 @@ pub fn analyze_uart_binary(
 
     let mut re_notes = vec![
         "This is NOT climate TLV. Do not invent 10-bit tags from the body.".into(),
-        "Long-term goal: map each (kind,b5,b6) family to a struct layout per model.".into(),
-        "Method: capture pairs before/after one app or panel action; diff body bytes.".into(),
-        "Correlate with LG cloud decode (bridge) when available — labelled ground truth.".into(),
-        "Once a field is stable, promote it to a named decoder + HA entity if useful.".into(),
     ];
-    if kind == 0xa8 {
+    if kind == 0xa8 && body.len() == 73 {
         re_notes.push(
-            "kind 0xa8 seen on DHUM: SUPERSET/private blob; may embed sensor/filter-like fields."
+            "DHUM 0xa8/73B layout: +4 seq, +44 ambient half-°C (=0x1fd), +45 RH% (=0x336)."
+                .into(),
+        );
+        re_notes.push(
+            "b6=0x0d periodic stream (pairs with sparse TLV); b6=0x10 alternate snapshot."
+                .into(),
+        );
+    } else if kind == 0xa8 {
+        re_notes.push(
+            "kind 0xa8 on DHUM: private/SUPERSET blob — diff same-length bodies to map fields."
                 .into(),
         );
     }
-    if byte5 >= 0x03 && byte5 <= 0x66 {
+    if (0x03..=0x67).contains(&byte5) {
         re_notes.push(
-            "b5 in SUPERSET band (0x03–0x66): expect fixed binary layouts, not values TLV.".into(),
+            "b5 in SUPERSET/private band: fixed binary layout, not values TLV.".into(),
         );
     }
 
@@ -242,24 +340,37 @@ pub fn uart_binary_export_text(
         "stats: zero={} nonzero={} unique={}\n",
         analysis.zero_bytes, analysis.nonzero_bytes, analysis.unique_bytes
     ));
+    let high: Vec<_> = analysis
+        .heuristics
+        .iter()
+        .filter(|h| h.confidence == "high" && h.width > 0)
+        .collect();
+    if !high.is_empty() {
+        out.push_str("fields:\n");
+        for h in &high {
+            out.push_str(&format!(
+                "  +{} = {} — {}\n",
+                h.offset, h.raw, h.interpretation
+            ));
+        }
+    }
     out.push_str("candidates:\n");
     let mut n = 0;
     for h in &analysis.heuristics {
-        if h.width == 0 {
-            continue;
+        if h.width == 0 || h.confidence == "high" {
+            continue; // high already under fields:
         }
-        // Prefer medium-signal hits; cap list
-        if n >= 12 {
+        if n >= 10 {
             out.push_str("  …\n");
             break;
         }
         out.push_str(&format!(
-            "  +{} {} raw={} — {}\n",
-            h.offset, h.endian, h.raw, h.interpretation
+            "  +{} {} raw={} ({}) — {}\n",
+            h.offset, h.endian, h.raw, h.confidence, h.interpretation
         ));
         n += 1;
     }
-    if n == 0 {
+    if n == 0 && high.is_empty() {
         out.push_str("  (none)\n");
     }
     out
@@ -284,5 +395,26 @@ mod tests {
         assert!(text.contains("kind=0xa8") || text.contains("0xa8"));
         assert!(text.contains("body:"));
         assert!(!text.to_lowercase().contains("please help"));
+    }
+
+    /// Live DHUM stream body (2026-08-10): +44=64 → 32.0°C, +45=60% RH, seq=0x35.
+    #[test]
+    fn dhum_a8_layout_matches_tlv_correlation() {
+        let body = hex::decode(
+            "0a010d0d3501111e020000000000000100000003010000020000000036300007bb300d0000000000000a0000403c00fa0400000000000000000000058e00000100000000006b6ce000",
+        )
+        .unwrap();
+        assert_eq!(body.len(), 73);
+        assert_eq!(body[4], 0x35);
+        assert_eq!(body[44], 64); // half-°C → 32.0
+        assert_eq!(body[45], 60); // RH %
+        let fields = dhum_a8_layout_fields(&body);
+        assert!(fields.iter().any(|h| h.offset == 44 && h.confidence == "high"));
+        assert!(fields.iter().any(|h| h.offset == 45 && h.interpretation.contains("60%")));
+        let a = analyze_uart_binary(0xa8, 0x67, 0x0d, 0x01, &body, Some(true));
+        let text = uart_binary_export_text(Some("DHUM_056905_WW"), Some("fromDevice"), "00", &a);
+        assert!(text.contains("fields:"));
+        assert!(text.contains("tracks TLV 0x1fd"));
+        assert!(text.contains("32.0"));
     }
 }
