@@ -1,5 +1,6 @@
 # Multi-stage Rust build for rethink-cloud
-FROM rust:1.85-bookworm AS build
+# time 0.3.x needs rustc >= 1.88; icu_* 2.2 needs >= 1.86. Pin above those floors.
+FROM rust:1.88-bookworm AS build
 WORKDIR /app
 
 # Cache dependency builds
