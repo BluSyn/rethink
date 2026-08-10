@@ -950,6 +950,20 @@ function renderDecode(data) {
     const body = get('tlv_body')
     body.innerHTML = ''
     const els = data.elements || []
+    if (data.protocol === 'UartBinary') {
+        const ba = data.binaryAnalysis || {}
+        const env = ba.envelope || {}
+        const hits = ba.heuristics || []
+        body.innerHTML = `<tr><td colspan="4" class="empty-state">
+            <b>UartBinary</b> — not climate TLV.
+            kind=0x${Number(env.kind || 0).toString(16)} b5=0x${Number(env.byte5 || 0).toString(16)}
+            b6=0x${Number(env.byte6 || 0).toString(16)} body=${ba.body_len || '?'}B ·
+            ${hits.length} heuristic candidate(s) — see text breakdown.
+        </td></tr>`
+        get('decode_summary').innerHTML = `protocol=<b>UartBinary</b> · attempting structured RE (envelope + heuristics)`
+        renderPayloadView(data.hex || get('decode_hex').value, null)
+        return
+    }
     if (els.length === 0) {
         body.innerHTML = `<tr><td colspan="4" class="empty-state">No TLV elements (protocol=${escapeHtml(
             data.protocol || '?',

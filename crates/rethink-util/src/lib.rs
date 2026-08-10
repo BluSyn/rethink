@@ -9,7 +9,9 @@ pub mod mtosp;
 pub mod packet_codec;
 pub mod tlv;
 pub mod tlv_catalog;
+pub mod uart_binary;
 
 pub use crc16::crc16;
 pub use packet_codec::{decode_packet, encode_packet, Decoded, Direction, EncodeInput, Protocol};
 pub use tlv::{build as tlv_build, parse as tlv_parse, Tlv};
+pub use uart_binary::{analyze_uart_binary, uart_binary_export_text, UartBinaryAnalysis};

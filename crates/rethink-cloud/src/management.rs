@@ -15,6 +15,7 @@ use rethink_core::ha::HaConnection;
 use rethink_util::packet_codec::{decode_packet, Decoded, Direction};
 use rethink_util::tlv;
 use rethink_util::tlv_catalog::{classify_tlvs, llm_export_text, KNOWN_TAGS};
+use rethink_util::uart_binary::{analyze_uart_binary, uart_binary_export_text};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -536,6 +537,7 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
     let mut notes = Vec::new();
     let mut dir_out = requested_dir.to_string();
     let mut crc_ok: Option<bool> = None;
+    let mut binary_analysis: Option<serde_json::Value> = None;
 
     match decode_packet(&hex) {
         Decoded::Tlv(t) => {
@@ -581,19 +583,34 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
         }
         Decoded::Unknown(u) => {
             notes.push(format!("packet_codec: {}", u.reason));
-            // Non-TLV UART envelope (private/SUPERSET/extended): do NOT invent TLV tags.
+            // Non-TLV UART envelope: analyze body with heuristics (do NOT invent TLV tags).
             if u.reason.starts_with("uart_binary") {
                 protocol = "UartBinary".into();
                 if bytes.len() >= 13 {
+                    let kind = bytes[6];
+                    let b5 = bytes[7];
+                    let b6 = bytes[8];
+                    let b7 = bytes[9];
                     let len = bytes[10] as usize;
                     let start = 11usize;
                     let end = (start + len).min(bytes.len().saturating_sub(2));
                     if end > start {
-                        aabb_body = Some(hex::encode(&bytes[start..end]));
+                        let body = &bytes[start..end];
+                        aabb_body = Some(hex::encode(body));
+                        let crc = if u.reason.contains("crc_ok=true") {
+                            Some(true)
+                        } else if u.reason.contains("crc_ok=false") {
+                            Some(false)
+                        } else {
+                            None
+                        };
+                        let analysis = analyze_uart_binary(kind, b5, b6, b7, body, crc);
                         notes.push(format!(
-                            "binary body {} bytes — not climate TLV; see kind/b5/b6 in notes",
-                            end - start
+                            "binary body {} bytes — heuristic hits={}",
+                            body.len(),
+                            analysis.heuristics.len()
                         ));
+                        binary_analysis = Some(serde_json::to_value(&analysis).unwrap_or(json!({})));
                     }
                 }
             } else {
@@ -666,6 +683,7 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
         "unknowns": unknowns,
         "unknownCount": unknowns.len(),
         "aabbBody": aabb_body,
+        "binaryAnalysis": binary_analysis,
         "notes": notes,
         "hex": hex,
     }))
@@ -699,6 +717,60 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
             return (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "error": e}))).into_response();
         }
     };
+    let hex = decoded
+        .get("hex")
+        .and_then(|h| h.as_str())
+        .unwrap_or("");
+    let protocol = decoded
+        .get("protocol")
+        .and_then(|p| p.as_str())
+        .unwrap_or("");
+
+    // Binary UART: prefer structured heuristic export over empty TLV export.
+    if protocol == "UartBinary" {
+        let text = if let Some(ba) = decoded.get("binaryAnalysis") {
+            // Re-run analysis from envelope fields in JSON for stable text formatting
+            if let (Some(kind), Some(b5), Some(b6), Some(b7), Some(body_hex)) = (
+                ba.pointer("/envelope/kind").and_then(|v| v.as_u64()),
+                ba.pointer("/envelope/byte5").and_then(|v| v.as_u64()),
+                ba.pointer("/envelope/byte6").and_then(|v| v.as_u64()),
+                ba.pointer("/envelope/byte7").and_then(|v| v.as_u64()),
+                ba.get("body_hex").and_then(|v| v.as_str()),
+            ) {
+                let raw_body = hex::decode(body_hex).unwrap_or_default();
+                let crc = ba.pointer("/envelope/crc_ok").and_then(|v| v.as_bool());
+                let analysis = analyze_uart_binary(
+                    kind as u8,
+                    b5 as u8,
+                    b6 as u8,
+                    b7 as u8,
+                    &raw_body,
+                    crc,
+                );
+                uart_binary_export_text(
+                    body.model_id.as_deref(),
+                    body.direction.as_deref().or(Some("fromDevice")),
+                    hex,
+                    &analysis,
+                )
+            } else {
+                format!(
+                    "# ThinQ UART binary RE export\nprotocol: UartBinary\nhex: {hex}\n\n{}",
+                    serde_json::to_string_pretty(ba).unwrap_or_default()
+                )
+            }
+        } else {
+            format!("# ThinQ UART binary RE export\nprotocol: UartBinary\nhex: {hex}\n")
+        };
+        return Json(json!({
+            "ok": true,
+            "text": text,
+            "unknownCount": 0,
+            "decode": decoded,
+        }))
+        .into_response();
+    }
+
     let items: Vec<(u16, u32)> = decoded
         .get("elements")
         .and_then(|e| e.as_array())
@@ -713,10 +785,6 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
         })
         .unwrap_or_default();
     let classified = classify_tlvs(&items);
-    let hex = decoded
-        .get("hex")
-        .and_then(|h| h.as_str())
-        .unwrap_or("");
     let text = llm_export_text(
         body.model_id.as_deref(),
         body.direction.as_deref().or(Some("fromDevice")),
