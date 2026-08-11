@@ -113,6 +113,14 @@ impl DeviceAcceptor {
                     == Some(did.as_str())
                 {
                     if let Some(dev) = self.devices.lock().get(&client_id).cloned() {
+                        // Heal: reconnect race may have removed this id from DeviceManager
+                        // while the MQTT session + acceptor still hold the device.
+                        if self.manager.get(&did).is_none() {
+                            eprintln!(
+                                "device {did}: re-accepting into manager (was orphaned from UI/HA)"
+                            );
+                            self.manager.accept(dev.clone());
+                        }
                         if let Some(data) = payload.get("data").and_then(|d| d.as_str()) {
                             if let Ok(buf) = hex::decode(data) {
                                 dev.notify_data(&buf);
@@ -152,14 +160,23 @@ impl DeviceAcceptor {
             eprintln!("completeProvisioning_ack received without deploy/preDeploy");
             return;
         };
+        // Same MQTT client already provisioned — only re-bind if manager lost the device
+        // (e.g. pre-fix reconnect race). Otherwise ignore duplicate ack.
         if meta_c.has_device {
-            eprintln!("completeProvisioning_ack received twice?");
-            return;
+            if self.manager.get(device_id).is_some() && self.devices.lock().contains_key(&client_id)
+            {
+                return;
+            }
+            eprintln!(
+                "device {device_id}: completeProvisioning_ack on already-flagged client but missing from manager — re-registering"
+            );
         }
 
         if let Some(old) = self.clients_by_id.lock().get(device_id).copied() {
-            eprintln!("device {device_id} already connected, dropping the old one");
-            self.broker.destroy_client(old);
+            if old != client_id {
+                eprintln!("device {device_id} already connected, dropping the old one");
+                self.broker.destroy_client(old);
+            }
         }
         self.clients_by_id
             .lock()

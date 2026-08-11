@@ -117,10 +117,21 @@ impl DeviceManager {
         }
         let mgr = self.clone();
         let dev_id = id.clone();
+        // Capture this Arc so close only removes *this* connection.
+        // Matching by device id alone races: on ThinQ2 reconnect the old MQTT
+        // client's disconnect can run after the new device is accepted and
+        // wrongly wipe the live entry (UI empty, HA unavailable, packets still
+        // logged against the new MQTT session).
+        let device_for_close = device.clone();
         device.add_close_handler(move || {
             let mut map = mgr.devices.lock();
-            if map.get(&dev_id).map(|d| d.id.as_str()) == Some(dev_id.as_str()) {
+            let still_ours = map
+                .get(&dev_id)
+                .map(|current| Arc::ptr_eq(current, &device_for_close))
+                .unwrap_or(false);
+            if still_ours {
                 map.remove(&dev_id);
+                drop(map);
                 for h in mgr.on_drop.lock().iter() {
                     h(&dev_id);
                 }
@@ -166,5 +177,60 @@ impl DeviceManager {
             })
             .collect();
         serde_json::json!({ "devices": devices })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn dummy_dev(id: &str) -> Arc<ConnectedDevice> {
+        ConnectedDevice::new(
+            id.into(),
+            Platform::Thinq2,
+            Metadata {
+                model_id: "RAC_056905_WW".into(),
+                model_name: "RAC".into(),
+                device_type: Some("401".into()),
+                sw_version: None,
+            },
+            Arc::new(|_b| {}),
+            Arc::new(|_m| {}),
+        )
+    }
+
+    #[test]
+    fn close_of_old_connection_does_not_drop_reconnected_device() {
+        let mgr = DeviceManager::new();
+        let drops = Arc::new(AtomicUsize::new(0));
+        let d = drops.clone();
+        mgr.on_drop_device(move |_| {
+            d.fetch_add(1, Ordering::SeqCst);
+        });
+
+        let first = dummy_dev("dev-1");
+        mgr.accept(first.clone());
+        assert!(mgr.get("dev-1").is_some());
+
+        // Reconnect: new Arc for same id
+        let second = dummy_dev("dev-1");
+        mgr.accept(second.clone());
+        assert!(mgr.get("dev-1").is_some());
+        assert!(Arc::ptr_eq(&mgr.get("dev-1").unwrap(), &second));
+
+        // Old connection closes — must not remove the live second entry
+        first.notify_close();
+        assert!(
+            mgr.get("dev-1").is_some(),
+            "reconnect survivor must stay in manager"
+        );
+        assert!(Arc::ptr_eq(&mgr.get("dev-1").unwrap(), &second));
+        assert_eq!(drops.load(Ordering::SeqCst), 0);
+
+        // Live connection closes — then drop
+        second.notify_close();
+        assert!(mgr.get("dev-1").is_none());
+        assert_eq!(drops.load(Ordering::SeqCst), 1);
     }
 }

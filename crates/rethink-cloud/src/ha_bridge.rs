@@ -191,7 +191,27 @@ impl HaBridge {
         let id = thinqdev.id.clone();
         self.ha_devices.lock().insert(id.clone(), hadevice.clone());
         let bridge = self.clone();
+        // Only tear down HA when *this* ConnectedDevice closes — not when a
+        // superseded reconnect's stale close handler runs after re-accept.
+        let thinq_for_close = thinqdev.clone();
         thinqdev.add_close_handler(move || {
+            let still_ours = {
+                let t2 = bridge.t2_adapters.lock();
+                if let Some(a) = t2.get(&id) {
+                    Arc::ptr_eq(&a.dev, &thinq_for_close)
+                } else {
+                    drop(t2);
+                    bridge
+                        .t1_adapters
+                        .lock()
+                        .get(&id)
+                        .map(|a| Arc::ptr_eq(&a.dev, &thinq_for_close))
+                        .unwrap_or(false)
+                }
+            };
+            if !still_ours {
+                return;
+            }
             if let Some(ha) = bridge.ha_devices.lock().remove(&id) {
                 ha.drop_device();
             }
