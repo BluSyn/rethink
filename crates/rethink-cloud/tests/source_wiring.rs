@@ -19,6 +19,14 @@ fn management_exposes_re_and_detail_routes() {
     assert!(index.contains("workbench") || index.contains("Live frames"));
     assert!(index.contains("messages"), "integrated monitor frame list");
     assert!(index.contains("detail_bar"), "selected device detail bar");
+    assert!(
+        index.contains("__RETHINK_GIT_SHA__") && index.contains("panel_git_sha"),
+        "nav should show injected git short SHA placeholder"
+    );
+    assert!(
+        mgmt.contains("RETHINK_GIT_SHA") && mgmt.contains("__RETHINK_GIT_SHA__"),
+        "static handler must inject build SHA into index.html"
+    );
     // Management UI must be offline-capable: no Google Fonts / CDN call-outs.
     assert!(
         index.contains("vendor/materialize.min.css") && index.contains("vendor/materialize.min.js"),
@@ -70,6 +78,7 @@ fn management_exposes_re_and_detail_routes() {
     );
 
     let panel = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../html/panel.js"));
+    assert!(!panel.contains("PANEL_UI_REV"), "manual UI rev stamp removed");
     assert!(panel.contains("api/re/export"));
     assert!(panel.contains("api/devices/"));
     assert!(panel.contains("loadFrameIntoDecoder"));

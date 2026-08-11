@@ -485,6 +485,9 @@ fn mime_for_path(path: &str) -> &'static str {
     }
 }
 
+/// Short git SHA from build.rs (`git rev-parse` or `RETHINK_GIT_SHA`), else `dev`.
+const GIT_SHA: &str = env!("RETHINK_GIT_SHA");
+
 async fn static_file(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -493,10 +496,19 @@ async fn static_file(uri: axum::http::Uri) -> Response {
     for c in candidates {
         if let Some(file) = HTML.get_file(c) {
             let mime = mime_for_path(c);
+            let mut body = file.contents().to_vec();
+            // Inject build identity into the nav badge (placeholder in index.html).
+            if c == "index.html" || c.ends_with("/index.html") {
+                if let Ok(s) = std::str::from_utf8(&body) {
+                    body = s
+                        .replace("__RETHINK_GIT_SHA__", GIT_SHA)
+                        .into_bytes();
+                }
+            }
             return (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, mime)],
-                file.contents().to_vec(),
+                body,
             )
                 .into_response();
         }

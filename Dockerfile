@@ -70,6 +70,11 @@ RUN find crates html -type f \( \
         -o -name '*.woff2' -o -name '*.toml' \
       \) -exec touch {} +
 
+# Management UI shows this short SHA (fallback "dev" when unset / no .git).
+# Build: docker build --build-arg RETHINK_GIT_SHA=$(git rev-parse --short=7 HEAD) ...
+ARG RETHINK_GIT_SHA=dev
+ENV RETHINK_GIT_SHA=${RETHINK_GIT_SHA}
+
 # Rebuild only workspace packages; dependency objects remain from layer A.
 RUN cargo build --release \
       -p rethink-cloud -p rethink-setup -p rethink-tools \
