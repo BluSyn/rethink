@@ -39,9 +39,12 @@ pub struct AvailabilityInfo {
 ///
 /// Nested under modern device discovery as `components.trigger_{object_id}`
 /// on `{discovery_prefix}/device/rethink/{device_id}/config`. Fired on
-/// `{rethink_prefix}/{device_id}/{topic_suffix}`. Classic
-/// `device_automation/.../config` topics are empty-retained so old dual-path
-/// discoveries do not conflict.
+/// `{rethink_prefix}/{device_id}/{topic_suffix}`.
+///
+/// **Do not** also publish classic `device_automation/.../config` (or empty
+/// clears for those topics) for the same type+subtype: HA keys live triggers by
+/// `device_id_type_subtype`, so classic tear-down calls `detach_trigger()` and
+/// clears `topic` for the nested trigger too — UI then lists nothing.
 #[derive(Debug, Clone)]
 pub struct DeviceTriggerDef {
     /// Discovery object_id path segment (e.g. `bucket_full`).
@@ -491,15 +494,13 @@ mod ha_mqtt_sink_tests {
             }),
             "nested device_automation trigger missing from device discovery: {logged:?}"
         );
-        // Classic topics must be cleared (empty retain) so HA does not keep a
-        // second discovery id for the same type+subtype.
+        // Never touch classic device_automation topics — empty retain there
+        // tears down the shared HA trigger_id and blanks topic for nested too.
         assert!(
-            logged.iter().any(|(t, body, retain)| {
-                t == "homeassistant/device_automation/dev-xyz/bucket_full/config"
-                    && *retain
-                    && body.is_empty()
-            }),
-            "classic trigger topic must be empty-retained to clear old discovery: {logged:?}"
+            !logged
+                .iter()
+                .any(|(t, _, _)| t.contains("/device_automation/")),
+            "must not publish classic device_automation topics: {logged:?}"
         );
 
         pubs.lock().unwrap().clear();
@@ -534,14 +535,12 @@ impl HaConnection for HaMqttSink {
         );
         normalize_device_identifiers(&mut payload);
 
-        // Nested device triggers on the modern device discovery document (same
-        // path entities use). HA unique-keys triggers by (device, type, subtype),
-        // so classic `device_automation/.../config` must NOT also publish the
-        // same type+subtype — that produced "conflicts with existing device
-        // trigger" and left half-setup state.
-        //
-        // Older builds retained classic topics; clear them with empty retain so
-        // MQTT reload unloads those discovery ids and only nested remains.
+        // Nested device triggers only (same modern device discovery doc as
+        // entities). HA indexes live triggers by `{device_id}_{type}_{subtype}`.
+        // Publishing classic `device_automation/.../config` *or* an empty retain
+        // on that topic for the same type+subtype shares that index: classic
+        // tear-down runs detach_trigger() and sets topic=None, so nested
+        // triggers disappear from Create automation after every reload/birth.
         if let Some(comps) = payload
             .as_object_mut()
             .and_then(|o| o.get_mut("components"))
@@ -571,20 +570,6 @@ impl HaConnection for HaMqttSink {
         let body = serde_json::to_vec(&payload).unwrap_or_default();
         // Retain so HA recovers after broker/HA restart without waiting for birth.
         self.do_publish(&discovery_topic, &body, true);
-
-        for trig in &config.device_triggers {
-            let classic_topic = format!(
-                "{}/device_automation/{}/{}/config",
-                self.config.discovery_prefix, id, trig.object_id
-            );
-            // Empty retained payload removes prior classic discovery from broker + HA.
-            self.do_publish(&classic_topic, b"", true);
-            tracing::debug!(
-                target: "rethink_ha",
-                %classic_topic,
-                "cleared classic device trigger discovery (nested only)"
-            );
-        }
     }
 
     fn publish_property(&self, id: &str, property: &str, value: PropertyValue) {
