@@ -90,4 +90,30 @@ action:
   `rethink/<id>/events/<object_id>`
 
 We intentionally do **not** use MQTT device_automation triggers for
-notifications; they do not surface reliably in the HA automation UI.
+notifications (see below).
+
+## Why not MQTT device triggers?
+
+MQTT Device Triggers **are registered** by Home Assistant (visible in logs /
+MQTT debug), but the **frontend only surfaces a fixed set of `type` / `subtype`
+values** designed for remotes and buttons:
+
+**`type` (shown in UI):**
+
+- `button_short_press`, `button_short_release`
+- `button_long_press`, `button_long_release`
+- `button_double_press`, `button_triple_press`
+- `button_quadruple_press`, `button_quintuple_press`
+
+**`subtype` (shown in UI):**
+
+- `turn_on`, `turn_off`, `button_1` … `button_6`
+
+Anything else (e.g. `type: problem`, `subtype: bucket_full`, custom names) is
+accepted by discovery, but **does not appear** in the automation editor or on
+the device page. That is by design: device triggers target button-style events,
+not sticky conditions like “bucket full” or “filter needs change”.
+
+We tried both classic and nested discovery paths; registration worked, UI did
+not. **Entities** (`binary_sensor` / `event`) are the reliable approach for
+rethink notifications and match how users already build automations.
