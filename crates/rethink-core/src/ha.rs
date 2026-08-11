@@ -449,7 +449,7 @@ mod ha_mqtt_sink_tests {
         sink.publish_config("dev-xyz", &config);
 
         let logged = pubs.lock().unwrap().clone();
-        // Classic discovery topic
+        // Classic discovery topic only (HA unique on device+type+subtype).
         assert!(
             logged.iter().any(|(t, body, retain)| {
                 t == "homeassistant/device_automation/dev-xyz/bucket_full/config"
@@ -461,16 +461,16 @@ mod ha_mqtt_sink_tests {
             }),
             "retained classic device trigger discovery missing: {logged:?}"
         );
-        // Nested in modern device discovery (same path as binary_sensor entities)
+        // Device discovery must not nest device_automation (dual-path conflict).
         assert!(
             logged.iter().any(|(t, body, retain)| {
                 t == "homeassistant/device/rethink/dev-xyz/config"
                     && *retain
-                    && body.contains("\"platform\":\"device_automation\"")
-                    && body.contains("trigger_bucket_full")
                     && body.contains("\"identifiers\":[\"dev-xyz\"]")
+                    && !body.contains("trigger_bucket_full")
+                    && !body.contains("\"platform\":\"device_automation\"")
             }),
-            "nested device_automation component missing from device discovery: {logged:?}"
+            "device discovery must omit nested triggers: {logged:?}"
         );
 
         pubs.lock().unwrap().clear();
@@ -505,41 +505,28 @@ impl HaConnection for HaMqttSink {
         );
         normalize_device_identifiers(&mut payload);
 
-        // Embed device_automation components in the modern device discovery
-        // payload (same path entities use). Classic-only topics are easy to
-        // miss in HA logs; nested components ride with the working device doc.
+        // HA keys MQTT device triggers uniquely by (device, type, subtype).
+        // Do NOT also nest device_automation under modern device discovery —
+        // dual publish yields "conflicts with existing device trigger" and the
+        // second path never sets up. Entities stay on the device discovery doc;
+        // triggers use classic discovery only (device_trigger.mqtt docs).
+        //
+        // If a previous build nested `trigger_*` components, strip them so the
+        // retained device config no longer re-registers them on HA restart.
         if let Some(comps) = payload
             .as_object_mut()
             .and_then(|o| o.get_mut("components"))
             .and_then(|c| c.as_object_mut())
         {
-            for trig in &config.device_triggers {
-                let event_topic = format!(
-                    "{}/{}/{}",
-                    self.config.rethink_prefix, id, trig.topic_suffix
-                );
-                // Avoid colliding with entity keys like binary_sensor "bucket_full"
-                let key = format!("trigger_{}", trig.object_id);
-                comps.insert(
-                    key,
-                    json!({
-                        "platform": "device_automation",
-                        "automation_type": "trigger",
-                        "type": trig.type_,
-                        "subtype": trig.subtype,
-                        "payload": trig.payload,
-                        "topic": event_topic,
-                    }),
-                );
-            }
+            comps.retain(|k, _| !k.starts_with("trigger_"));
         }
 
         let body = serde_json::to_vec(&payload).unwrap_or_default();
-        // Retain so HA recovers triggers/entities after broker/HA restart
-        // without waiting for the next birth + republish.
+        // Retain so HA recovers entities after broker/HA restart without waiting
+        // for the next birth + republish.
         self.do_publish(&discovery_topic, &body, true);
 
-        // Also publish classic per-trigger discovery (HA docs / older paths).
+        // Classic per-trigger discovery only.
         let mut device_info = recursive_replace(
             &serde_json::to_value(&config.device).unwrap_or(json!({})),
             &replacements,
