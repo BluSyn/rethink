@@ -12,9 +12,10 @@
 blueprint:
   name: Rethink — Problem sensor notification
   description: >
-    Send a notification when a rethink problem binary_sensor turns on
-    (filter needs change, bucket full, etc.). Fires only on the rising
-    edge (off → on), not while the condition stays true.
+    Send a notification when one or more rethink problem binary_sensors
+    turn on (filter needs change, bucket full, etc.). Fires only on the
+    rising edge (off → on). Select multiple entities to cover several
+    appliances with one automation.
   domain: automation
   source_url: https://github.com/anszom/rethink/blob/rust-rewrite/docs/homeassistant/blueprints/rethink_problem_notify.yaml
   author: rethink
@@ -22,21 +23,22 @@ blueprint:
     min_version: "2023.8.0"
   input:
     problem_entity:
-      name: Problem sensor
+      name: Problem sensor(s)
       description: >
-        Rethink binary_sensor with device class Problem
-        (e.g. Filter needs change, Bucket full).
+        One or more rethink binary_sensors with device class Problem
+        (e.g. Filter needs change, Bucket full). Multi-select supported.
       selector:
         entity:
           domain: binary_sensor
           device_class:
             - problem
+          multiple: true
     notify_service:
       name: Notify service
       description: >
-        Service to call, e.g. notify.mobile_app_phone or
-        notify.persistent_notification. Use the full service name.
-      default: notify.persistent_notification
+        Service to call, e.g. notify.notify, notify.mobile_app_phone, or
+        notify.persistent_notification.
+      default: notify.notify
       selector:
         text:
     title:
@@ -47,13 +49,18 @@ blueprint:
     message:
       name: Notification message
       description: >
-        Supports templates. Default includes the entity friendly name.
-      default: "{{ trigger.to_state.name }} is ON"
+        Jinja template. Use trigger.to_state for the sensor that fired
+        (works with multi-entity). Leave default for device-friendly name.
+      default: >-
+        {{ trigger.to_state.attributes.friendly_name
+           | default(trigger.to_state.name, true)
+           | default(trigger.entity_id) }} is ON
       selector:
         text:
           multiline: true
 
-mode: single
+mode: queued
+max: 20
 max_exceeded: silent
 
 trigger:

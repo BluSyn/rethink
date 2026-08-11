@@ -13,8 +13,9 @@
 blueprint:
   name: Rethink — Event notification
   description: >
-    Send a notification when a rethink event entity fires (cycle complete,
-    bucket alert, filter alert). Optional filter on event_type.
+    Send a notification when one or more rethink event entities fire
+    (cycle complete, bucket alert, filter alert). Optional filter on
+    event_type. Multi-select entities to cover several appliances.
   domain: automation
   source_url: https://github.com/anszom/rethink/blob/rust-rewrite/docs/homeassistant/blueprints/rethink_event_notify.yaml
   author: rethink
@@ -22,27 +23,28 @@ blueprint:
     min_version: "2023.8.0"
   input:
     event_entity:
-      name: Event entity
+      name: Event entity(ies)
       description: >
-        Rethink event entity (e.g. Cycle complete, Bucket alert, Filter alert).
+        One or more rethink event entities (Cycle complete, Bucket alert,
+        Filter alert). Multi-select supported.
       selector:
         entity:
           domain: event
+          multiple: true
     event_type_filter:
       name: Event type filter (optional)
       description: >
-        Leave empty to notify on any event from this entity. Set to a specific
-        type to filter, e.g. cycle_complete, bucket_full, bucket_ok,
-        filter_needs_change.
+        Leave empty to notify on any event from these entities. Set to a
+        specific type to filter, e.g. cycle_complete, bucket_full,
+        bucket_ok, filter_needs_change.
       default: ""
       selector:
         text:
     notify_service:
       name: Notify service
       description: >
-        Full service name, e.g. notify.mobile_app_phone or
-        notify.persistent_notification.
-      default: notify.persistent_notification
+        Full service name, e.g. notify.notify or notify.mobile_app_phone.
+      default: notify.notify
       selector:
         text:
     title:
@@ -52,16 +54,19 @@ blueprint:
         text:
     message:
       name: Notification message
-      description: Supports templates. event_type is available as trigger variables.
+      description: >
+        Jinja template. trigger.to_state is the event entity that fired.
       default: >-
-        {{ trigger.to_state.name }}:
+        {{ trigger.to_state.attributes.friendly_name
+           | default(trigger.to_state.name, true)
+           | default(trigger.entity_id) }}:
         {{ trigger.to_state.attributes.event_type | default('event') }}
       selector:
         text:
           multiline: true
 
 mode: queued
-max: 10
+max: 20
 max_exceeded: silent
 
 variables:
@@ -75,7 +80,8 @@ condition:
   # Ignore unavailable/unknown transitions
   - condition: template
     value_template: >-
-      {{ trigger.to_state.state not in ['unavailable', 'unknown'] }}
+      {{ trigger.to_state is defined
+         and trigger.to_state.state not in ['unavailable', 'unknown', none] }}
   # Optional event_type filter (empty = any)
   - condition: template
     value_template: >-

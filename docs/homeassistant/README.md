@@ -42,8 +42,12 @@ Ready-made automation blueprints live in [`blueprints/`](blueprints/):
 3. **Developer tools → YAML → Reload automations** (or restart HA).
 
 4. **Settings → Automations & scenes → Create automation → Use a blueprint**  
-   Choose a rethink blueprint, pick the entity and notify service
-   (e.g. `notify.mobile_app_your_phone` or `notify.persistent_notification`).
+   Choose a rethink blueprint, pick one or more entities (multi-select), and a
+   notify service (default `notify.notify`; or e.g. `notify.mobile_app_phone`).
+
+Each blueprint accepts **multiple entities** of the same type so one automation
+can cover every AC / dehumidifier / fridge with shared message text (device
+name comes from the entity that fired).
 
 ### Without blueprints (minimal YAML)
 

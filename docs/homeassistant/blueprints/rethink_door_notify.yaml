@@ -11,8 +11,9 @@
 blueprint:
   name: Rethink — Door open notification
   description: >
-    Notify when a rethink door binary_sensor opens. Optional delay so brief
-    door opens do not spam notifications (e.g. wait 60s still open).
+    Notify when one or more rethink door binary_sensors open. Optional delay
+    so brief door opens do not spam notifications. Multi-select for several
+    fridges/freezers with one automation.
   domain: automation
   source_url: https://github.com/anszom/rethink/blob/rust-rewrite/docs/homeassistant/blueprints/rethink_door_notify.yaml
   author: rethink
@@ -20,13 +21,14 @@ blueprint:
     min_version: "2023.8.0"
   input:
     door_entity:
-      name: Door sensor
-      description: Rethink binary_sensor with device class Door.
+      name: Door sensor(s)
+      description: One or more rethink binary_sensors with device class Door.
       selector:
         entity:
           domain: binary_sensor
           device_class:
             - door
+          multiple: true
     open_duration:
       name: Still open for
       description: >
@@ -41,7 +43,7 @@ blueprint:
           mode: box
     notify_service:
       name: Notify service
-      default: notify.persistent_notification
+      default: notify.notify
       selector:
         text:
     title:
@@ -51,12 +53,18 @@ blueprint:
         text:
     message:
       name: Notification message
-      default: "{{ trigger.to_state.name }} has been open"
+      description: >
+        Jinja template. trigger.to_state is the door that stayed open.
+      default: >-
+        {{ trigger.to_state.attributes.friendly_name
+           | default(trigger.to_state.name, true)
+           | default(trigger.entity_id) }} has been open
       selector:
         text:
           multiline: true
 
-mode: restart
+mode: queued
+max: 20
 max_exceeded: silent
 
 trigger:
