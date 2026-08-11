@@ -403,10 +403,32 @@
             }
             .breakdown-label {
                 display: flex;
-                align-items: baseline;
+                align-items: center;
                 justify-content: space-between;
+                gap: 0.5rem;
                 margin-top: 0.35rem;
                 flex-shrink: 0;
+            }
+            .breakdown-label-left {
+                display: inline-flex;
+                align-items: center;
+                gap: 0.2rem;
+            }
+            #btn_copy_export {
+                width: 1.6rem;
+                height: 1.6rem;
+                line-height: 1.6rem;
+                padding: 0;
+                border-radius: 4px;
+                color: var(--muted);
+            }
+            #btn_copy_export:hover {
+                color: var(--text);
+                background: rgba(255, 255, 255, 0.06);
+            }
+            #btn_copy_export .material-icons {
+                font-size: 1.05rem;
+                line-height: 1.6rem;
             }
             .tlv-table {
                 width: 100%;
@@ -654,7 +676,6 @@
                             </div>
                             <div class="decode-actions">
                                 <button id="btn_decode" class="btn btn-small teal waves-effect">Decode</button>
-                                <button id="btn_copy_export" class="btn-flat btn-small white-text">Copy breakdown</button>
                                 <label style="display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.75rem; margin-left: auto">
                                     <input type="checkbox" id="auto_decode" checked style="opacity: 1; pointer-events: auto; position: static" />
                                     auto on frame click
@@ -675,7 +696,18 @@
                                 </table>
                             </div>
                             <div class="breakdown-label">
-                                <label for="text_breakdown" class="helper" style="margin: 0">Text breakdown</label>
+                                <div class="breakdown-label-left">
+                                    <label for="text_breakdown" class="helper" style="margin: 0">Text breakdown</label>
+                                    <button
+                                        type="button"
+                                        id="btn_copy_export"
+                                        class="btn-flat btn-small waves-effect"
+                                        title="Copy breakdown"
+                                        aria-label="Copy breakdown"
+                                    >
+                                        <i class="material-icons">content_copy</i>
+                                    </button>
+                                </div>
                                 <span class="helper" style="margin: 0">updates with every decode</span>
                             </div>
                             <textarea id="text_breakdown" readonly placeholder="Decoded breakdown appears here…"></textarea>

@@ -78,8 +78,11 @@ fn live_drying_ec_uses_rec4_remaining_and_phase02() {
     assert_eq!(prop(&ha, "child_lock").as_deref(), Some("ON")); // flags 0x19 bit0
     assert_eq!(prop(&ha, "damp_dry_signal").as_deref(), Some("ON")); // bit3
     assert_eq!(prop(&ha, "tick").as_deref(), Some("11"));
-    // progress ≈ (25-27) clamped → 0
+    // baseline = max(27 remaining, 25 programmed) = 27 → progress 0
+    assert_eq!(prop(&ha, "cycle_baseline").as_deref(), Some("27"));
     assert_eq!(prop(&ha, "progress").as_deref(), Some("0"));
+    assert_eq!(prop(&ha, "option_a").as_deref(), Some("1"));
+    assert_eq!(prop(&ha, "option_b").as_deref(), Some("3"));
 
     // Later frame: remaining 16 min
     thinq.emit_data(&hex_decode(
@@ -87,8 +90,9 @@ fn live_drying_ec_uses_rec4_remaining_and_phase02() {
     ));
     assert_eq!(prop(&ha, "remaining_time").as_deref(), Some("16"));
     assert_eq!(prop(&ha, "tick").as_deref(), Some("120"));
-    // progress (25-16)/25 = 36%
-    assert_eq!(prop(&ha, "progress").as_deref(), Some("36"));
+    // progress (27-16)/27 ≈ 40%
+    assert_eq!(prop(&ha, "progress").as_deref(), Some("40"));
+    assert_eq!(prop(&ha, "cycle_baseline").as_deref(), Some("27"));
     dev.drop_device();
 }
 
@@ -133,6 +137,36 @@ fn telemetry_0x3e() {
     let (ha, thinq, dev) = make();
     thinq.emit_data(&hex_decode("aa0b303e0092031b068cbb"));
     assert_eq!(prop(&ha, "telemetry").as_deref(), Some("0092031B06"));
+    assert_eq!(prop(&ha, "telemetry_u16").as_deref(), Some("146"));
+    assert_eq!(prop(&ha, "telemetry_opt").as_deref(), Some("3"));
+    // Second session payload from later capture
+    thinq.emit_data(&hex_decode("aa0b303e00970448085bbb"));
+    assert_eq!(prop(&ha, "telemetry_u16").as_deref(), Some("151"));
+    assert_eq!(prop(&ha, "telemetry_opt").as_deref(), Some("4"));
+    dev.drop_device();
+}
+
+#[test]
+fn progress_when_remaining_exceeds_programmed() {
+    let (ha, thinq, dev) = make();
+    // programmed 25, live remaining 56 (extended sensor dry) — second capture style
+    thinq.emit_data(&hex_decode(
+        "aa3c30ec00190200380237040000030300000000001900044001000000750000190200380237040000030300000000001900044001000000750099bb",
+    ));
+    assert_eq!(prop(&ha, "remaining_time").as_deref(), Some("56"));
+    assert_eq!(prop(&ha, "initial_time").as_deref(), Some("25"));
+    assert_eq!(prop(&ha, "cycle_baseline").as_deref(), Some("56"));
+    assert_eq!(prop(&ha, "progress").as_deref(), Some("0"));
+    assert_eq!(prop(&ha, "option_a").as_deref(), Some("0"));
+    assert_eq!(prop(&ha, "option_b").as_deref(), Some("4"));
+    // remaining drops to 53
+    thinq.emit_data(&hex_decode(
+        "aa3c30ec00190200350237040000030300000000001900045b01000000750000190200350237040000030300000000001900045c01000000750050bb",
+    ));
+    assert_eq!(prop(&ha, "remaining_time").as_deref(), Some("53"));
+    assert_eq!(prop(&ha, "cycle_baseline").as_deref(), Some("56"));
+    // (56-53)/56 ≈ 5%
+    assert_eq!(prop(&ha, "progress").as_deref(), Some("5"));
     dev.drop_device();
 }
 
@@ -146,6 +180,10 @@ fn config_exposes_new_entities() {
         "temp",
         "progress",
         "initial_time",
+        "cycle_baseline",
+        "option_a",
+        "option_b",
+        "telemetry_u16",
         "child_lock",
         "cycle_complete",
     ] {

@@ -77,7 +77,7 @@ document.addEventListener('DOMContentLoaded', function () {
 })
 
 /** Bump when sequence-export / decode UI changes so you can confirm the binary embeds this file. */
-const PANEL_UI_REV = 'aabb-fields-clean'
+const PANEL_UI_REV = 'copy-icon-breakdown'
 
 document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('panel_ui_rev')

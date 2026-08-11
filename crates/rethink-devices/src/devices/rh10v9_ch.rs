@@ -7,18 +7,22 @@
 //! |--------|---------|
 //! | 0–1    | Programmed / frozen H:M estimate (often static during auto dry) |
 //! | 2      | Phase (0 Off, 1 Initial, **2 Drying**, 3 Pause, 4 End, 0x32/0x33 alt) |
-//! | 3      | (seen 0x01 while running) |
+//! | 3      | Session option A (0/1 in captures; diagnostic) |
 //! | 4      | **Live remaining minutes** (decrements ~1/min wall-clock while drying) |
 //! | 6      | Course code |
 //! | 7      | Dry level (1–5 style) |
 //! | 10–11  | Temperature / option codes |
 //! | 17     | Flags bitfield |
+//! | 19     | Session option B (3/4 in captures; mirrors 0x3e[2]) |
 //! | 20     | ~6 s tick counter while active |
 //! | 21     | Diagnostic |
 //! | 25     | Constant 0x75 in captures |
 //!
 //! Dual EC frames carry prev+cur; we publish **cur**. Subtype 0x3e is a short
-//! telemetry burst (energy-ish) published as diagnostics.
+//! telemetry burst: `u16be` candidate + option echo — diagnostic only (not proven Wh/W).
+//!
+//! Progress uses max(live remaining seen this cycle, programmed H:M) as baseline so
+//! extended sensor-dry times (remaining > programmed) still make sense.
 
 use crate::device_trait::DeviceHandler;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
@@ -98,6 +102,8 @@ pub struct Device {
     monitor_thread: Mutex<Option<thread::JoinHandle<()>>>,
     /// Last status phase (for cycle-complete edge).
     last_phase: Mutex<Option<u8>>,
+    /// Peak remaining minutes this cycle (for progress when time extends).
+    max_remaining: Mutex<i64>,
 }
 
 impl Device {
@@ -108,6 +114,7 @@ impl Device {
             stop: Arc::new(AtomicBool::new(false)),
             monitor_thread: Mutex::new(None),
             last_phase: Mutex::new(None),
+            max_remaining: Mutex::new(0),
         });
 
         let mut base = default_config(&meta, Some(json!({"name": "LG Dryer"})));
@@ -164,6 +171,19 @@ impl Device {
                     "state_topic": "$this/initial_time",
                     "name": "Programmed time",
                     "icon": "mdi:clock-outline",
+                    "device_class": "duration",
+                    "unit_of_measurement": "min",
+                    "entity_category": "diagnostic",
+                }),
+            ),
+            (
+                "cycle_baseline",
+                json!({
+                    "platform": "sensor",
+                    "unique_id": "$deviceid-cycle_baseline",
+                    "state_topic": "$this/cycle_baseline",
+                    "name": "Cycle baseline",
+                    "icon": "mdi:timer-sand",
                     "device_class": "duration",
                     "unit_of_measurement": "min",
                     "entity_category": "diagnostic",
@@ -250,13 +270,58 @@ impl Device {
                 }),
             ),
             (
+                "option_a",
+                json!({
+                    "platform": "sensor",
+                    "unique_id": "$deviceid-option_a",
+                    "state_topic": "$this/option_a",
+                    "name": "Option A (rec3)",
+                    "icon": "mdi:tune",
+                    "entity_category": "diagnostic",
+                }),
+            ),
+            (
+                "option_b",
+                json!({
+                    "platform": "sensor",
+                    "unique_id": "$deviceid-option_b",
+                    "state_topic": "$this/option_b",
+                    "name": "Option B (rec19)",
+                    "icon": "mdi:tune-variant",
+                    "entity_category": "diagnostic",
+                }),
+            ),
+            (
                 "telemetry",
                 json!({
                     "platform": "sensor",
                     "unique_id": "$deviceid-telemetry",
                     "state_topic": "$this/telemetry",
-                    "name": "Telemetry (0x3e)",
+                    "name": "Telemetry (0x3e hex)",
                     "icon": "mdi:sine-wave",
+                    "entity_category": "diagnostic",
+                }),
+            ),
+            (
+                "telemetry_u16",
+                json!({
+                    "platform": "sensor",
+                    "unique_id": "$deviceid-telemetry_u16",
+                    "state_topic": "$this/telemetry_u16",
+                    "name": "Telemetry u16 (0x3e)",
+                    "icon": "mdi:numeric",
+                    "entity_category": "diagnostic",
+                    "state_class": "measurement",
+                }),
+            ),
+            (
+                "telemetry_opt",
+                json!({
+                    "platform": "sensor",
+                    "unique_id": "$deviceid-telemetry_opt",
+                    "state_topic": "$this/telemetry_opt",
+                    "name": "Telemetry option (0x3e)",
+                    "icon": "mdi:numeric",
                     "entity_category": "diagnostic",
                 }),
             ),
@@ -293,6 +358,7 @@ impl Device {
             return;
         }
         let phase = rec[2];
+        let option_a = rec[3] as i64;
         let programmed = rec[0] as i64 * 60 + rec[1] as i64;
         // Live countdown lives at rec[4] while drying (1 min wall-clock ≈ 1 unit).
         // When zero (idle/initial), fall back to H:M at rec[0..1].
@@ -305,6 +371,7 @@ impl Device {
         let dry_level = rec[7];
         let temp = rec[10];
         let flags = rec[17];
+        let option_b = rec[19] as i64;
         let tick = rec[20] as i64;
         let status = status_map()
             .get(&phase)
@@ -323,15 +390,32 @@ impl Device {
             .map(|s| (*s).to_string())
             .unwrap_or_else(|| format!("0x{temp:02x}"));
 
-        let progress = if programmed > 0 && remaining <= programmed {
-            (((programmed - remaining) as f64 / programmed as f64) * 100.0).clamp(0.0, 100.0) as i64
-        } else if phase == 0x04 {
+        let prev_phase = *self.last_phase.lock();
+        // Reset cycle baseline when leaving Off / End into a new run.
+        let restart = matches!(prev_phase, None | Some(0x00) | Some(0x04))
+            && phase != 0x00
+            && phase != 0x04;
+        if restart || phase == 0x00 {
+            *self.max_remaining.lock() = 0;
+        }
+        if remaining > 0 {
+            let mut mx = self.max_remaining.lock();
+            if remaining > *mx {
+                *mx = remaining;
+            }
+        }
+        let baseline = {
+            let mx = *self.max_remaining.lock();
+            mx.max(programmed).max(remaining)
+        };
+        let progress = if phase == 0x04 {
             100
+        } else if baseline > 0 && remaining <= baseline {
+            (((baseline - remaining) as f64 / baseline as f64) * 100.0).clamp(0.0, 100.0) as i64
         } else {
             0
         };
 
-        let prev_phase = *self.last_phase.lock();
         *self.last_phase.lock() = Some(phase);
 
         let running = phase != 0x00;
@@ -343,12 +427,16 @@ impl Device {
             .publish_property("remaining_time", remaining.into());
         self.core
             .publish_property("initial_time", programmed.into());
+        self.core
+            .publish_property("cycle_baseline", baseline.into());
         self.core.publish_property("progress", progress.into());
         self.core.publish_property("dry_level", dry_s.into());
         self.core.publish_property("temp", temp_s.into());
         self.core
             .publish_property("flags", (flags as i64).into());
         self.core.publish_property("tick", tick.into());
+        self.core.publish_property("option_a", option_a.into());
+        self.core.publish_property("option_b", option_b.into());
         // Flag bits (aligned with other LG laundry layouts where known).
         self.core.publish_property(
             "child_lock",
@@ -368,15 +456,23 @@ impl Device {
         }
     }
 
-    /// Short 0x3e telemetry (7-byte body after kind): publish hex for RE / diagnostics.
+    /// Short 0x3e telemetry: hex + structured fields (not proven energy/power).
     fn process_telemetry(&self, body: &[u8]) {
-        // body: 30 3e xx xx xx xx xx
+        // body: 30 3e | u16be | opt | x | y
         if body.len() < 3 {
             return;
         }
         let payload = &body[2..];
         self.core
             .publish_property("telemetry", rethink_core::hex_encode(payload).into());
+        if payload.len() >= 2 {
+            let u16v = u16::from_be_bytes([payload[0], payload[1]]) as i64;
+            self.core.publish_property("telemetry_u16", u16v.into());
+        }
+        if payload.len() >= 3 {
+            self.core
+                .publish_property("telemetry_opt", (payload[2] as i64).into());
+        }
     }
 
     fn process_aabb(&self, buf: &[u8]) {

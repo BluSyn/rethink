@@ -27,21 +27,30 @@ Capture: ~11 min drying, 119× EC frames. Wall-clock validated:
 
 | Off | Field | Notes |
 |-----|--------|--------|
-| 0–1 | Programmed H:M | Often **frozen** during auto sensor dry (stayed 25 min) |
+| 0–1 | Programmed H:M | Often **frozen** (stayed 25 min) even when live remaining is higher |
 | 2 | Phase | `00` Off, `01` Initial, **`02` Drying** (heat-pump), `03` Pause, `04` End; also `0x32`/`0x33` on other firmwares |
-| 4 | **Live remaining minutes** | Decrements **1:1 with wall-clock minutes** while drying (27→16 over 11 min) |
+| 3 | Option A | Session-constant (1 vs 0 across two runs) — diagnostic |
+| 4 | **Live remaining minutes** | Decrements **1:1 with wall-clock minutes** while drying |
 | 6 | Course | e.g. `0x37` → mapped “Auto / Sensor” |
 | 7 | Dry level | 1–5 style (4 = More in capture) |
 | 10 | Temp code | 1–5 style (3 = Medium) |
 | 17 | Flags | bit0 child lock, bit3 damp-dry (same convention as other laundry) |
+| 19 | Option B | Session-constant (3 vs 4); **mirrors `0x3e[2]`** — diagnostic |
 | 20 | Tick | +1 about every **6 s** while active |
 | 25 | `0x75` | constant in all captures |
 
-**HA mapping:** `remaining_time` prefers `rec[4]` when non-zero, else H:M. `initial_time` = programmed H:M. `progress%` from those two.
+**HA mapping:**
+
+- `remaining_time` = `rec[4]` when non-zero, else H:M
+- `initial_time` = programmed H:M (`rec[0..1]`)
+- `cycle_baseline` = max remaining seen this cycle (and programmed)
+- `progress%` = `(baseline − remaining) / baseline` (handles extended remaining)
+- `option_a` / `option_b` = `rec[3]` / `rec[19]` raw
+- `0x3e`: hex + `telemetry_u16` (BE u16) + `telemetry_opt` (= option B echo) — **not** proven Wh/W
 
 ## Still open
 
 - Full course name table for Chinese heat-pump SKUs
-- Meaning of `0x3e` telemetry bytes (`0092031b06` repeated)
-- Confirm dry-level / temp codes against UI labels on a second cycle
-- Control TX (start/stop/course) — none in this RX-only capture
+- Prove or disprove `0x3e` u16 as energy over a full cycle
+- Confirm dry-level / temp / option A–B labels against panel UI
+- Control TX (start/stop/course) — none in RX-only captures
