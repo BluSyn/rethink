@@ -181,7 +181,7 @@ impl Device {
     }
 
     fn publish_filter_data(&self) {
-        let (used, life, changed, fire_filter) = {
+        let (used, life, changed, needs, fire_filter) = {
             let mut inner = self.inner.lock();
             let used = inner.filter_used_time;
             let life = inner.filter_life_time;
@@ -189,7 +189,7 @@ impl Device {
             let needs = life > 0 && used >= life;
             let fire = needs && !inner.filter_needs_change;
             inner.filter_needs_change = needs;
-            (used, life, changed, fire)
+            (used, life, changed, needs, fire)
         };
         let changed_date = format!(
             "{:04}-{:02}-{:02}",
@@ -210,10 +210,23 @@ impl Device {
         self.core
             .ha
             .publish_property(&self.core.id, "filterchangeddate", changed_date.into());
+        // Sticky problem binary_sensor (ON while filter exhausted).
+        self.core.ha.publish_property(
+            &self.core.id,
+            "filter_needs_change",
+            if needs {
+                "ON".into()
+            } else {
+                "OFF".into()
+            },
+        );
+        // Rising-edge event for automations that want a one-shot.
         if fire_filter {
-            self.core
-                .ha
-                .fire_device_trigger(&self.core.id, "filter_needs_change");
+            self.core.ha.fire_notification_event(
+                &self.core.id,
+                "filter_changed",
+                "filter_needs_change",
+            );
         }
     }
 
@@ -837,10 +850,19 @@ impl Device {
             }
         }
 
-        // Device triggers for HA automations (device page)
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
+        // Entity-based notifications (device_automation triggers are unreliable in HA UI).
+        let (k, v) = rethink_core::problem_binary_sensor(
             "filter_needs_change",
-        ));
+            "Filter needs change",
+        );
+        config.components.insert(k, v);
+        let (k, v) = rethink_core::notification_event(
+            "filter_changed",
+            "Filter alert",
+            &["filter_needs_change"],
+            Some("problem"),
+        );
+        config.components.insert(k, v);
 
         self.core.set_config(config);
 

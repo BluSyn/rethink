@@ -8,7 +8,8 @@ pub mod metadata;
 pub mod thinq;
 
 pub use ha::{
-    DeviceDiscovery, DeviceTriggerDef, HaConnection, MockHaConnection, PropertyValue,
+    notification_event, problem_binary_sensor, DeviceDiscovery, HaConnection, MockHaConnection,
+    PropertyValue,
 };
 pub use metadata::Metadata;
 pub use thinq::{

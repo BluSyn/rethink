@@ -189,13 +189,15 @@ impl Device {
                 "state_topic": "$this/bucket_full-",
             }),
         );
-        // HA Device Triggers (device page → Create Automation)
-        config
-            .device_triggers
-            .push(rethink_core::DeviceTriggerDef::problem("bucket_full"));
-        config
-            .device_triggers
-            .push(rethink_core::DeviceTriggerDef::problem("bucket_ok"));
+        // Bucket full is already a problem binary_sensor — automate on state.
+        // Rising-edge event for one-shot automations (bucket just full / emptied).
+        let (k, v) = rethink_core::notification_event(
+            "bucket_alert",
+            "Bucket alert",
+            &["bucket_full", "bucket_ok"],
+            Some("problem"),
+        );
+        config.components.insert(k, v);
 
         this.add_fields(&mut config);
 
@@ -506,16 +508,12 @@ impl Device {
             "bucket_full-",
             if full { "ON".into() } else { "OFF".into() },
         );
-        // Device trigger event (non-retained) for HA automations
-        if full {
-            self.core
-                .ha
-                .fire_device_trigger(&self.core.id, "bucket_full");
-        } else {
-            self.core
-                .ha
-                .fire_device_trigger(&self.core.id, "bucket_ok");
-        }
+        // One-shot event entity (binary_sensor state already published above).
+        self.core.ha.fire_notification_event(
+            &self.core.id,
+            "bucket_alert",
+            if full { "bucket_full" } else { "bucket_ok" },
+        );
     }
 
     fn intercept_key_value(&self, k: u16, v: u32) -> bool {
@@ -716,14 +714,10 @@ mod tests {
         assert!(c.contains_key("bucket_light"));
         assert_eq!(c["bucket_full"]["device_class"], "problem");
         assert_eq!(c["bucket_full"]["state_topic"], "$this/bucket_full-");
-        let triggers = &device.config.as_ref().unwrap().device_triggers;
-        assert!(
-            triggers.iter().any(|t| t.object_id == "bucket_full"),
-            "bucket_full device trigger registered"
-        );
-        assert!(
-            triggers.iter().any(|t| t.object_id == "bucket_ok"),
-            "bucket_ok device trigger registered"
+        assert_eq!(c["bucket_alert"]["platform"], "event");
+        assert_eq!(
+            c["bucket_alert"]["event_types"],
+            json!(["bucket_full", "bucket_ok"])
         );
         assert_eq!(c["current_humidity"]["platform"], "sensor");
         assert_eq!(c["current_humidity"]["device_class"], "humidity");
@@ -791,7 +785,9 @@ mod tests {
             assert!(
                 events
                     .iter()
-                    .any(|(t, p)| t == "triggers/bucket_full" && p == "bucket_full"),
+                    .any(|(t, p)| {
+                        t == "events/bucket_alert" && p.contains("bucket_full")
+                    }),
                 "device trigger event on full: {events:?}"
             );
         }
@@ -808,8 +804,10 @@ mod tests {
             assert!(
                 events
                     .iter()
-                    .any(|(t, p)| t == "triggers/bucket_ok" && p == "bucket_ok"),
-                "device trigger event on emptied: {events:?}"
+                    .any(|(t, p)| {
+                        t == "events/bucket_alert" && p.contains("bucket_ok")
+                    }),
+                "bucket_ok event on emptied: {events:?}"
             );
         }
         thinq.emit_data(&hex_decode(BUCKET_FULL_NOTIFY_HEX));

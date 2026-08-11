@@ -35,65 +35,48 @@ pub struct AvailabilityInfo {
     pub topic: String,
 }
 
-/// MQTT Device Trigger definition (HA device_automation discovery).
+/// Sticky problem-style binary sensor component for device discovery.
 ///
-/// Nested under modern device discovery as `components.trigger_{object_id}`
-/// on `{discovery_prefix}/device/rethink/{device_id}/config`. Fired on
-/// `{rethink_prefix}/{device_id}/{topic_suffix}`.
-///
-/// **Do not** also publish classic `device_automation/.../config` (or empty
-/// clears for those topics) for the same type+subtype: HA keys live triggers by
-/// `device_id_type_subtype`, so classic tear-down calls `detach_trigger()` and
-/// clears `topic` for the nested trigger too — UI then lists nothing.
-#[derive(Debug, Clone)]
-pub struct DeviceTriggerDef {
-    /// Discovery object_id path segment (e.g. `bucket_full`).
-    pub object_id: String,
-    /// HA trigger type (e.g. `problem`, `turned_on`, `button_short_press`).
-    pub type_: String,
-    /// HA trigger subtype (e.g. `bucket_full`) — unique with type per device.
-    pub subtype: String,
-    /// Payload HA matches on the event topic.
-    pub payload: String,
-    /// Event topic under the device (`triggers/bucket_full` → `rethink/{id}/triggers/bucket_full`).
-    pub topic_suffix: String,
+/// Prefer this over MQTT device_automation triggers: it shows as a normal
+/// entity on the device and automations use state ON/OFF (reliable in HA UI).
+pub fn problem_binary_sensor(object_id: &str, name: &str) -> (String, Value) {
+    (
+        object_id.into(),
+        json!({
+            "platform": "binary_sensor",
+            "unique_id": format!("$deviceid-{object_id}"),
+            "name": name,
+            "device_class": "problem",
+            "payload_on": "ON",
+            "payload_off": "OFF",
+            "state_topic": format!("$this/{object_id}"),
+        }),
+    )
 }
 
-impl DeviceTriggerDef {
-    /// Problem-class notification (bucket full, filter, …).
-    /// `object_id` = `subtype` = `payload` = `name`; topic `triggers/{name}`.
-    pub fn problem(name: &str) -> Self {
-        Self {
-            object_id: name.into(),
-            type_: "problem".into(),
-            subtype: name.into(),
-            payload: name.into(),
-            topic_suffix: format!("triggers/{name}"),
-        }
+/// One-shot MQTT event entity component for device discovery.
+///
+/// Prefer this for moment notifications (cycle complete, …). Automate on the
+/// event entity in HA; payload must be JSON `{"event_type":"..."}` (non-retained).
+pub fn notification_event(
+    object_id: &str,
+    name: &str,
+    event_types: &[&str],
+    device_class: Option<&str>,
+) -> (String, Value) {
+    let mut body = json!({
+        "platform": "event",
+        "unique_id": format!("$deviceid-{object_id}"),
+        "name": name,
+        "state_topic": format!("$this/events/{object_id}"),
+        "event_types": event_types,
+    });
+    if let Some(dc) = device_class {
+        body.as_object_mut()
+            .unwrap()
+            .insert("device_class".into(), json!(dc));
     }
-
-    /// Named event trigger (cycle complete, etc.).
-    /// `object_id` = `subtype` = `payload` = `name`; topic `triggers/{name}`.
-    pub fn event(type_: &str, name: &str) -> Self {
-        Self {
-            object_id: name.into(),
-            type_: type_.into(),
-            subtype: name.into(),
-            payload: name.into(),
-            topic_suffix: format!("triggers/{name}"),
-        }
-    }
-
-    /// Full control when subtype differs from object_id (e.g. door open/closed).
-    pub fn custom(object_id: &str, type_: &str, subtype: &str, payload: &str) -> Self {
-        Self {
-            object_id: object_id.into(),
-            type_: type_.into(),
-            subtype: subtype.into(),
-            payload: payload.into(),
-            topic_suffix: format!("triggers/{object_id}"),
-        }
-    }
+    (object_id.into(), body)
 }
 
 /// Device discovery document (HA MQTT discovery).
@@ -106,22 +89,21 @@ pub struct DeviceDiscovery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub availability_mode: Option<String>,
     pub components: HashMap<String, Value>,
-    /// Extra MQTT device triggers (not part of HA device discovery JSON).
-    #[serde(skip)]
-    pub device_triggers: Vec<DeviceTriggerDef>,
 }
 
 /// Trait for publishing to HA MQTT (real connection or mock).
 pub trait HaConnection: Send + Sync {
     fn publish_config(&self, id: &str, config: &DeviceDiscovery);
     fn publish_property(&self, id: &str, property: &str, value: PropertyValue);
-    /// Fire a one-shot event (e.g. device trigger payload). Not retained.
+    /// Fire a one-shot event payload. Not retained.
     fn publish_event(&self, id: &str, topic_suffix: &str, payload: &str);
     fn is_connected(&self) -> bool;
 
-    /// Fire a device trigger by `object_id` (topic `triggers/{object_id}`, payload = object_id).
-    fn fire_device_trigger(&self, id: &str, object_id: &str) {
-        self.publish_event(id, &format!("triggers/{object_id}"), object_id);
+    /// Fire an MQTT event-entity payload: `events/{object_id}` ← `{"event_type":…}`.
+    /// Non-retained (HA discards retained event replays).
+    fn fire_notification_event(&self, id: &str, object_id: &str, event_type: &str) {
+        let body = json!({ "event_type": event_type }).to_string();
+        self.publish_event(id, &format!("events/{object_id}"), &body);
     }
 }
 
@@ -212,8 +194,6 @@ pub struct MockDeviceInfo {
     pub properties: HashMap<String, PropertyValue>,
     /// (topic_suffix, payload) non-retained events
     pub events: Vec<(String, String)>,
-    /// Published device-trigger discovery object_ids
-    pub device_triggers: Vec<String>,
 }
 
 impl MockHaConnection {
@@ -276,11 +256,6 @@ impl HaConnection for MockHaConnection {
         let mut inner = self.inner.lock();
         let entry = inner.devices.entry(id.to_string()).or_default();
         entry.config = Some(config.clone());
-        entry.device_triggers = config
-            .device_triggers
-            .iter()
-            .map(|t| t.object_id.clone())
-            .collect();
     }
 
     fn publish_property(&self, id: &str, property: &str, value: PropertyValue) {
@@ -445,8 +420,11 @@ mod ha_mqtt_sink_tests {
     }
 
     #[test]
-    fn device_trigger_discovery_and_event_are_published() {
-        use crate::ha::{DeviceDiscovery, DeviceInfo, DeviceTriggerDef, HaConnection, OriginInfo};
+    fn notification_entities_and_events_publish() {
+        use crate::ha::{
+            notification_event, problem_binary_sensor, DeviceDiscovery, DeviceInfo, HaConnection,
+            OriginInfo,
+        };
         use std::sync::Mutex as StdMutex;
 
         let sink = HaMqttSink::new(test_cfg());
@@ -459,6 +437,12 @@ mod ha_mqtt_sink_tests {
                 retain,
             ));
         });
+
+        let mut components = HashMap::new();
+        let (k, v) = problem_binary_sensor("bucket_full", "Bucket full");
+        components.insert(k, v);
+        let (k, v) = notification_event("cycle_complete", "Cycle complete", &["cycle_complete"], None);
+        components.insert(k, v);
 
         let config = DeviceDiscovery {
             device: DeviceInfo {
@@ -475,44 +459,35 @@ mod ha_mqtt_sink_tests {
             },
             availability: None,
             availability_mode: None,
-            components: Default::default(),
-            device_triggers: vec![DeviceTriggerDef::problem("bucket_full")],
+            components,
         };
         sink.publish_config("dev-xyz", &config);
 
         let logged = pubs.lock().unwrap().clone();
-        // Nested under modern device discovery (same document as entities).
         assert!(
             logged.iter().any(|(t, body, retain)| {
                 t == "homeassistant/device/rethink/dev-xyz/config"
                     && *retain
                     && body.contains("\"identifiers\":[\"dev-xyz\"]")
-                    && body.contains("trigger_bucket_full")
-                    && body.contains("\"platform\":\"device_automation\"")
-                    && body.contains("\"automation_type\":\"trigger\"")
-                    && body.contains("rethink/dev-xyz/triggers/bucket_full")
+                    && body.contains("\"platform\":\"binary_sensor\"")
+                    && body.contains("bucket_full")
+                    && body.contains("\"platform\":\"event\"")
+                    && body.contains("cycle_complete")
+                    && !body.contains("device_automation")
             }),
-            "nested device_automation trigger missing from device discovery: {logged:?}"
-        );
-        // Never touch classic device_automation topics — empty retain there
-        // tears down the shared HA trigger_id and blanks topic for nested too.
-        assert!(
-            !logged
-                .iter()
-                .any(|(t, _, _)| t.contains("/device_automation/")),
-            "must not publish classic device_automation topics: {logged:?}"
+            "entity-based notifications missing from device discovery: {logged:?}"
         );
 
         pubs.lock().unwrap().clear();
-        sink.fire_device_trigger("dev-xyz", "bucket_full");
+        sink.fire_notification_event("dev-xyz", "cycle_complete", "cycle_complete");
         let logged = pubs.lock().unwrap().clone();
         assert!(
             logged.iter().any(|(t, body, retain)| {
-                t == "rethink/dev-xyz/triggers/bucket_full"
-                    && body == "bucket_full"
+                t == "rethink/dev-xyz/events/cycle_complete"
+                    && body.contains("\"event_type\":\"cycle_complete\"")
                     && !*retain
             }),
-            "non-retained trigger event missing: {logged:?}"
+            "non-retained notification event missing: {logged:?}"
         );
     }
 }
@@ -535,36 +510,17 @@ impl HaConnection for HaMqttSink {
         );
         normalize_device_identifiers(&mut payload);
 
-        // Nested device triggers only (same modern device discovery doc as
-        // entities). HA indexes live triggers by `{device_id}_{type}_{subtype}`.
-        // Publishing classic `device_automation/.../config` *or* an empty retain
-        // on that topic for the same type+subtype shares that index: classic
-        // tear-down runs detach_trigger() and sets topic=None, so nested
-        // triggers disappear from Create automation after every reload/birth.
+        // Drop leftover nested device_automation trigger_* keys from older builds
+        // so HA does not re-register broken device triggers from retained history.
         if let Some(comps) = payload
             .as_object_mut()
             .and_then(|o| o.get_mut("components"))
             .and_then(|c| c.as_object_mut())
         {
-            for trig in &config.device_triggers {
-                let event_topic = format!(
-                    "{}/{}/{}",
-                    self.config.rethink_prefix, id, trig.topic_suffix
-                );
-                // Prefix avoids colliding with entity keys (e.g. binary_sensor
-                // "bucket_full" vs trigger "bucket_full").
-                comps.insert(
-                    format!("trigger_{}", trig.object_id),
-                    json!({
-                        "platform": "device_automation",
-                        "automation_type": "trigger",
-                        "type": trig.type_,
-                        "subtype": trig.subtype,
-                        "payload": trig.payload,
-                        "topic": event_topic,
-                    }),
-                );
-            }
+            comps.retain(|k, v| {
+                !(k.starts_with("trigger_")
+                    || v.get("platform").and_then(|p| p.as_str()) == Some("device_automation"))
+            });
         }
 
         let body = serde_json::to_vec(&payload).unwrap_or_default();

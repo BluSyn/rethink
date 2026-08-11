@@ -48,7 +48,6 @@ pub fn default_config(meta: &Metadata, device_info: Option<Value>) -> DeviceDisc
         ]),
         availability_mode: Some("all".into()),
         components: HashMap::new(),
-        device_triggers: Vec::new(),
     }
 }
 
@@ -107,7 +106,7 @@ impl AabbDeviceCore {
         self.ha.publish_property(&self.id, prop, value);
     }
 
-    /// Publish fridge/freezer door binary state and fire device triggers on edges.
+    /// Publish fridge/freezer door binary state (automate on binary_sensor state).
     pub fn publish_door_with_trigger(&self, open: bool) {
         let val = if open { "ON" } else { "OFF" };
         let prev = self.publish_cache.lock().get("door").cloned();
@@ -115,11 +114,6 @@ impl AabbDeviceCore {
             return;
         }
         self.publish_property("door", val.into());
-        if open {
-            self.ha.fire_device_trigger(&self.id, "door_open");
-        } else if prev.as_deref() == Some("ON") {
-            self.ha.fire_device_trigger(&self.id, "door_closed");
-        }
     }
 
     pub fn set_config(&self, config: DeviceDiscovery) {

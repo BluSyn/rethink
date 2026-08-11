@@ -76,18 +76,7 @@ impl Device {
         ]
         .into_iter()
         .collect();
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
-            "door_open",
-            "opened",
-            "door",
-            "door_open",
-        ));
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
-            "door_closed",
-            "closed",
-            "door",
-            "door_closed",
-        ));
+        // Door binary_sensor above — automate on state.
         core.set_config(config);
 
         let t = this.clone();

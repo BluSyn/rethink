@@ -96,18 +96,7 @@ impl Device {
         ]
         .into_iter()
         .collect();
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
-            "door_open",
-            "opened",
-            "door",
-            "door_open",
-        ));
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
-            "door_closed",
-            "closed",
-            "door",
-            "door_closed",
-        ));
+        // Door is a binary_sensor above — automate on state open/closed.
         self.core.set_config(config);
     }
 

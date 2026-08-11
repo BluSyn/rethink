@@ -173,12 +173,13 @@ impl Device {
                 "state_topic": "$this/bucket_full-",
             }),
         );
-        config
-            .device_triggers
-            .push(rethink_core::DeviceTriggerDef::problem("bucket_full"));
-        config
-            .device_triggers
-            .push(rethink_core::DeviceTriggerDef::problem("bucket_ok"));
+        let (k, v) = rethink_core::notification_event(
+            "bucket_alert",
+            "Bucket alert",
+            &["bucket_full", "bucket_ok"],
+            Some("problem"),
+        );
+        config.components.insert(k, v);
 
         this.add_fields(&mut config);
         if let Some(serde_json::Value::Object(hum)) = config.components.get_mut("humidifier") {
@@ -365,15 +366,11 @@ impl Device {
             "bucket_full-",
             if full { "ON".into() } else { "OFF".into() },
         );
-        if full {
-            self.core
-                .ha
-                .fire_device_trigger(&self.core.id, "bucket_full");
-        } else {
-            self.core
-                .ha
-                .fire_device_trigger(&self.core.id, "bucket_ok");
-        }
+        self.core.ha.fire_notification_event(
+            &self.core.id,
+            "bucket_alert",
+            if full { "bucket_full" } else { "bucket_ok" },
+        );
     }
 
     fn intercept_key_value(&self, k: u16, v: u32) -> bool {
