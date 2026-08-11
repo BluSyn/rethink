@@ -18,7 +18,9 @@ pub struct HaDeviceState {
 
 pub fn default_config(meta: &Metadata, device_info: Option<Value>) -> DeviceDiscovery {
     let mut device = DeviceInfo {
-        identifiers: json!("$deviceid"),
+        // Array form matches HA MQTT discovery examples (Zigbee2MQTT, docs)
+        // and ensures device_automation triggers share the same registry identity.
+        identifiers: json!(["$deviceid"]),
         manufacturer: Some("LG".into()),
         model: Some(meta.model_name.clone()),
         sw_version: meta.sw_version.clone(),

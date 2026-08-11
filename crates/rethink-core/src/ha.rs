@@ -424,9 +424,9 @@ mod ha_mqtt_sink_tests {
             ));
         });
 
-        let mut config = DeviceDiscovery {
+        let config = DeviceDiscovery {
             device: DeviceInfo {
-                identifiers: json!("$deviceid"),
+                identifiers: json!(["$deviceid"]),
                 manufacturer: Some("LG".into()),
                 model: Some("DHUM".into()),
                 sw_version: None,
@@ -446,10 +446,10 @@ mod ha_mqtt_sink_tests {
                 "bucket_full",
             )],
         };
-        let _ = &mut config; // silence
         sink.publish_config("dev-xyz", &config);
 
         let logged = pubs.lock().unwrap().clone();
+        // Classic discovery topic
         assert!(
             logged.iter().any(|(t, body, retain)| {
                 t == "homeassistant/device_automation/dev-xyz/bucket_full/config"
@@ -457,8 +457,20 @@ mod ha_mqtt_sink_tests {
                     && body.contains("\"automation_type\":\"trigger\"")
                     && body.contains("\"subtype\":\"bucket_full\"")
                     && body.contains("rethink/dev-xyz/triggers/bucket_full")
+                    && body.contains("\"identifiers\":[\"dev-xyz\"]")
             }),
-            "retained device trigger discovery missing: {logged:?}"
+            "retained classic device trigger discovery missing: {logged:?}"
+        );
+        // Nested in modern device discovery (same path as binary_sensor entities)
+        assert!(
+            logged.iter().any(|(t, body, retain)| {
+                t == "homeassistant/device/rethink/dev-xyz/config"
+                    && *retain
+                    && body.contains("\"platform\":\"device_automation\"")
+                    && body.contains("trigger_bucket_full")
+                    && body.contains("\"identifiers\":[\"dev-xyz\"]")
+            }),
+            "nested device_automation component missing from device discovery: {logged:?}"
         );
 
         pubs.lock().unwrap().clear();
@@ -487,18 +499,52 @@ impl HaConnection for HaMqttSink {
             ("$rethink", self.config.rethink_prefix.as_str()),
             ("$deviceid", id),
         ];
-        let payload = recursive_replace(
+        let mut payload = recursive_replace(
             &serde_json::to_value(config).unwrap_or(json!({})),
             &replacements,
         );
-        let body = serde_json::to_vec(&payload).unwrap_or_default();
-        self.do_publish(&discovery_topic, &body, false);
+        normalize_device_identifiers(&mut payload);
 
-        // Device triggers — separate discovery docs, retained for HA restarts
-        let device_info = recursive_replace(
+        // Embed device_automation components in the modern device discovery
+        // payload (same path entities use). Classic-only topics are easy to
+        // miss in HA logs; nested components ride with the working device doc.
+        if let Some(comps) = payload
+            .as_object_mut()
+            .and_then(|o| o.get_mut("components"))
+            .and_then(|c| c.as_object_mut())
+        {
+            for trig in &config.device_triggers {
+                let event_topic = format!(
+                    "{}/{}/{}",
+                    self.config.rethink_prefix, id, trig.topic_suffix
+                );
+                // Avoid colliding with entity keys like binary_sensor "bucket_full"
+                let key = format!("trigger_{}", trig.object_id);
+                comps.insert(
+                    key,
+                    json!({
+                        "platform": "device_automation",
+                        "automation_type": "trigger",
+                        "type": trig.type_,
+                        "subtype": trig.subtype,
+                        "payload": trig.payload,
+                        "topic": event_topic,
+                    }),
+                );
+            }
+        }
+
+        let body = serde_json::to_vec(&payload).unwrap_or_default();
+        // Retain so HA recovers triggers/entities after broker/HA restart
+        // without waiting for the next birth + republish.
+        self.do_publish(&discovery_topic, &body, true);
+
+        // Also publish classic per-trigger discovery (HA docs / older paths).
+        let mut device_info = recursive_replace(
             &serde_json::to_value(&config.device).unwrap_or(json!({})),
             &replacements,
         );
+        normalize_device_identifiers_obj(&mut device_info);
         for trig in &config.device_triggers {
             let event_topic = format!(
                 "{}/{}/{}",
@@ -518,6 +564,12 @@ impl HaConnection for HaMqttSink {
             });
             let body = serde_json::to_vec(&disc).unwrap_or_default();
             self.do_publish(&disc_topic, &body, true);
+            tracing::debug!(
+                target: "rethink_ha",
+                %disc_topic,
+                event_topic,
+                "published MQTT device trigger discovery"
+            );
         }
     }
 
@@ -558,5 +610,29 @@ fn recursive_replace(val: &Value, replacements: &[(&str, &str)]) -> Value {
             Value::String(out)
         }
         other => other.clone(),
+    }
+}
+
+/// HA accepts string or list for identifiers; always emit a list so triggers and
+/// entities share a stable multi-value identity in the device registry.
+fn normalize_device_identifiers(payload: &mut Value) {
+    if let Some(dev) = payload.get_mut("device") {
+        normalize_device_identifiers_obj(dev);
+    }
+}
+
+fn normalize_device_identifiers_obj(device: &mut Value) {
+    let Some(obj) = device.as_object_mut() else {
+        return;
+    };
+    match obj.get("identifiers").cloned() {
+        Some(Value::String(s)) => {
+            obj.insert("identifiers".into(), json!([s]));
+        }
+        Some(Value::Array(_)) => {}
+        Some(other) => {
+            obj.insert("identifiers".into(), json!([other]));
+        }
+        None => {}
     }
 }
