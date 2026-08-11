@@ -1,0 +1,76 @@
+# Rethink — door open notification
+#
+# Use for fridge/freezer door binary_sensor:
+#   - binary_sensor.*_door
+#
+# Install:
+#   1. Copy this file to config/blueprints/automation/rethink/
+#   2. Reload automations or restart HA
+#   3. Settings → Automations → Create → Blueprints → pick this blueprint
+#
+blueprint:
+  name: Rethink — Door open notification
+  description: >
+    Notify when a rethink door binary_sensor opens. Optional delay so brief
+    door opens do not spam notifications (e.g. wait 60s still open).
+  domain: automation
+  source_url: https://github.com/anszom/rethink/blob/rust-rewrite/docs/homeassistant/blueprints/rethink_door_notify.yaml
+  author: rethink
+  homeassistant:
+    min_version: "2023.8.0"
+  input:
+    door_entity:
+      name: Door sensor
+      description: Rethink binary_sensor with device class Door.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class:
+            - door
+    open_duration:
+      name: Still open for
+      description: >
+        Only notify if the door stays open at least this long. Set to 0 for
+        immediate notification.
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+          mode: box
+    notify_service:
+      name: Notify service
+      default: notify.persistent_notification
+      selector:
+        text:
+    title:
+      name: Notification title
+      default: Door open
+      selector:
+        text:
+    message:
+      name: Notification message
+      default: "{{ trigger.to_state.name }} has been open"
+      selector:
+        text:
+          multiline: true
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input door_entity
+    from: "off"
+    to: "on"
+    for:
+      seconds: !input open_duration
+
+condition: []
+
+action:
+  - service: !input notify_service
+    data:
+      title: !input title
+      message: !input message

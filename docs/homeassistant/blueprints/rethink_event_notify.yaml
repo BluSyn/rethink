@@ -1,0 +1,90 @@
+# Rethink — MQTT event entity notification
+#
+# Use for one-shot notifications:
+#   - event.*_cycle_complete     (dryer finished)
+#   - event.*_bucket_alert       (bucket_full / bucket_ok)
+#   - event.*_filter_changed     (filter just became exhausted)
+#
+# Install:
+#   1. Copy this file to config/blueprints/automation/rethink/
+#   2. Reload automations or restart HA
+#   3. Settings → Automations → Create → Blueprints → pick this blueprint
+#
+blueprint:
+  name: Rethink — Event notification
+  description: >
+    Send a notification when a rethink event entity fires (cycle complete,
+    bucket alert, filter alert). Optional filter on event_type.
+  domain: automation
+  source_url: https://github.com/anszom/rethink/blob/rust-rewrite/docs/homeassistant/blueprints/rethink_event_notify.yaml
+  author: rethink
+  homeassistant:
+    min_version: "2023.8.0"
+  input:
+    event_entity:
+      name: Event entity
+      description: >
+        Rethink event entity (e.g. Cycle complete, Bucket alert, Filter alert).
+      selector:
+        entity:
+          domain: event
+    event_type_filter:
+      name: Event type filter (optional)
+      description: >
+        Leave empty to notify on any event from this entity. Set to a specific
+        type to filter, e.g. cycle_complete, bucket_full, bucket_ok,
+        filter_needs_change.
+      default: ""
+      selector:
+        text:
+    notify_service:
+      name: Notify service
+      description: >
+        Full service name, e.g. notify.mobile_app_phone or
+        notify.persistent_notification.
+      default: notify.persistent_notification
+      selector:
+        text:
+    title:
+      name: Notification title
+      default: Appliance event
+      selector:
+        text:
+    message:
+      name: Notification message
+      description: Supports templates. event_type is available as trigger variables.
+      default: >-
+        {{ trigger.to_state.name }}:
+        {{ trigger.to_state.attributes.event_type | default('event') }}
+      selector:
+        text:
+          multiline: true
+
+mode: queued
+max: 10
+max_exceeded: silent
+
+variables:
+  event_type_filter: !input event_type_filter
+
+trigger:
+  - platform: state
+    entity_id: !input event_entity
+
+condition:
+  # Ignore unavailable/unknown transitions
+  - condition: template
+    value_template: >-
+      {{ trigger.to_state.state not in ['unavailable', 'unknown'] }}
+  # Optional event_type filter (empty = any)
+  - condition: template
+    value_template: >-
+      {% set filt = event_type_filter | default('', true) | trim %}
+      {% set et = trigger.to_state.attributes.event_type | default('') %}
+      {{ filt == '' or et == filt }}
+
+action:
+  - service: !input notify_service
+    data:
+      title: !input title
+      message: !input message

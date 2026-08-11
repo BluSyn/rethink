@@ -1,0 +1,71 @@
+# Rethink — problem binary_sensor notification
+#
+# Use for sticky conditions that stay ON until cleared:
+#   - binary_sensor.*_filter_needs_change  (AC filter)
+#   - binary_sensor.*_bucket_full          (dehumidifier)
+#
+# Install:
+#   1. Copy this file to config/blueprints/automation/rethink/
+#   2. Developer Tools → YAML → Reload automations (or restart HA)
+#   3. Settings → Automations → Create → Blueprints → pick this blueprint
+#
+blueprint:
+  name: Rethink — Problem sensor notification
+  description: >
+    Send a notification when a rethink problem binary_sensor turns on
+    (filter needs change, bucket full, etc.). Fires only on the rising
+    edge (off → on), not while the condition stays true.
+  domain: automation
+  source_url: https://github.com/anszom/rethink/blob/rust-rewrite/docs/homeassistant/blueprints/rethink_problem_notify.yaml
+  author: rethink
+  homeassistant:
+    min_version: "2023.8.0"
+  input:
+    problem_entity:
+      name: Problem sensor
+      description: >
+        Rethink binary_sensor with device class Problem
+        (e.g. Filter needs change, Bucket full).
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class:
+            - problem
+    notify_service:
+      name: Notify service
+      description: >
+        Service to call, e.g. notify.mobile_app_phone or
+        notify.persistent_notification. Use the full service name.
+      default: notify.persistent_notification
+      selector:
+        text:
+    title:
+      name: Notification title
+      default: Appliance alert
+      selector:
+        text:
+    message:
+      name: Notification message
+      description: >
+        Supports templates. Default includes the entity friendly name.
+      default: "{{ trigger.to_state.name }} is ON"
+      selector:
+        text:
+          multiline: true
+
+mode: single
+max_exceeded: silent
+
+trigger:
+  - platform: state
+    entity_id: !input problem_entity
+    from: "off"
+    to: "on"
+
+condition: []
+
+action:
+  - service: !input notify_service
+    data:
+      title: !input title
+      message: !input message
