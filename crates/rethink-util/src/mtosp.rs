@@ -1,17 +1,25 @@
 //! MTOSP framing: 0xAA | length BE16 | XML payload | CRC16 BE | 0xBB
 
 use crate::crc16::crc16;
-use thiserror::Error;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum MtospError {
-    #[error("invalid header byte")]
     InvalidHeader,
-    #[error("invalid trailer byte")]
     InvalidTrailer,
-    #[error("invalid checksum")]
     InvalidChecksum,
 }
+
+impl std::fmt::Display for MtospError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidHeader => f.write_str("invalid header byte"),
+            Self::InvalidTrailer => f.write_str("invalid trailer byte"),
+            Self::InvalidChecksum => f.write_str("invalid checksum"),
+        }
+    }
+}
+
+impl std::error::Error for MtospError {}
 
 /// Format an XML payload as an MTOSP frame.
 pub fn format(xml: &str) -> Vec<u8> {

@@ -10,17 +10,13 @@ rethink-util = { workspace = true }
 rethink-core = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
-parking_lot = { workspace = true }
-async-trait = { workspace = true }
 base64 = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
-hex = { workspace = true }
 chrono = { workspace = true }
 hmac = { workspace = true }
 sha1 = "0.10"
@@ -31,5 +27,4 @@ rumqttc = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
-bytes = { workspace = true }
 webpki-roots = { workspace = true }

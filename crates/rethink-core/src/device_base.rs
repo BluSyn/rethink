@@ -3,7 +3,7 @@
 use crate::ha::{DeviceDiscovery, DeviceInfo, HaConnection, OriginInfo, PropertyValue};
 use crate::metadata::Metadata;
 use crate::thinq::Thinq2Device;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_util::crc16::crc16;
 use rethink_util::tlv::{self, Tlv};
 use serde_json::{json, Map, Value};

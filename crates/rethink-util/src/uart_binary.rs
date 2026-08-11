@@ -300,7 +300,7 @@ pub fn analyze_uart_binary(
             b5_hint: b5_hint(byte5),
             b6_hint: b6_hint(byte6),
         },
-        body_hex: hex::encode(body),
+        body_hex: crate::hex::encode(body),
         body_len: body.len(),
         zero_bytes: zero,
         nonzero_bytes: body.len().saturating_sub(zero),
@@ -382,7 +382,7 @@ mod tests {
 
     #[test]
     fn analyzes_dhum_a8_body() {
-        let body = hex::decode(
+        let body = crate::hex::decode(
             "0a010d10cf0111320200000000000001000000030100000000000000331e0007b81e0000000002260226024e365000fa00002100000000000000000222011e011c1e011e1e2f90bc00",
         )
         .unwrap();
@@ -400,7 +400,7 @@ mod tests {
     /// Live DHUM stream body (2026-08-10): +44=64 → 32.0°C, +45=60% RH, seq=0x35.
     #[test]
     fn dhum_a8_layout_matches_tlv_correlation() {
-        let body = hex::decode(
+        let body = crate::hex::decode(
             "0a010d0d3501111e020000000000000100000003010000020000000036300007bb300d0000000000000a0000403c00fa0400000000000000000000058e00000100000000006b6ce000",
         )
         .unwrap();

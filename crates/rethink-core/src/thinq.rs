@@ -1,7 +1,7 @@
 //! ThinQ device abstractions (platform-agnostic + mock devices for tests).
 
 use crate::metadata::Metadata;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use std::sync::Arc;
 
 /// Outbound ThinQ2 message recorded by mocks.
@@ -155,10 +155,10 @@ impl Thinq1Device for MockThinq1Device {
 
 /// Hex helpers used by tests.
 pub fn hex_encode(b: &[u8]) -> String {
-    hex::encode_upper(b)
+    rethink_util::hex::encode_upper(b)
 }
 
 pub fn hex_decode(s: &str) -> Vec<u8> {
     let cleaned: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    hex::decode(cleaned).unwrap_or_default()
+    rethink_util::hex::decode(&cleaned).unwrap_or_default()
 }

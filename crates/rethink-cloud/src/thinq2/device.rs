@@ -5,7 +5,7 @@ use crate::devmgr::{ConnectedDevice, DeviceManager, Platform, SendToDevice};
 use crate::mqtt_broker::{Broker, PublishPacket};
 use base64::Engine;
 use chrono::{Datelike, Timelike};
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::metadata::Metadata;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -122,7 +122,7 @@ impl DeviceAcceptor {
                             self.manager.accept(dev.clone());
                         }
                         if let Some(data) = payload.get("data").and_then(|d| d.as_str()) {
-                            if let Ok(buf) = hex::decode(data) {
+                            if let Ok(buf) = rethink_util::hex::decode(data) {
                                 dev.notify_data(&buf);
                             }
                         }
@@ -233,7 +233,7 @@ impl DeviceAcceptor {
                     "mid": mid,
                     "cmd": "packet",
                     "type": 1,
-                    "data": hex::encode(&buf),
+                    "data": rethink_util::hex::encode(&buf),
                 }),
                 SendToDevice::T2Clip {
                     cmd,

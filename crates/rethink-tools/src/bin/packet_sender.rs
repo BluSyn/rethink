@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         "mid": mid,
         "cmd": "packet",
         "type": 1,
-        "data": hex::encode(&out),
+        "data": rethink_util::hex::encode(&out),
     })
     .to_string();
     println!("{messagestr}");

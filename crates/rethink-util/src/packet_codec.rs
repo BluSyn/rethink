@@ -6,7 +6,6 @@
 
 use crate::crc16::crc16;
 use crate::tlv::{self, Tlv};
-use thiserror::Error;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
@@ -93,13 +92,22 @@ impl Decoded {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum EncodeError {
-    #[error("TLV payload exceeds 255 bytes")]
     TlvTooLarge,
-    #[error("invalid hex body: {0}")]
     InvalidHex(String),
 }
+
+impl std::fmt::Display for EncodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TlvTooLarge => f.write_str("TLV payload exceeds 255 bytes"),
+            Self::InvalidHex(s) => write!(f, "invalid hex body: {s}"),
+        }
+    }
+}
+
+impl std::error::Error for EncodeError {}
 
 /// AABB checksum: sum of every byte preceding checksum+BB, mod 256, xor 0x55.
 pub fn aabb_checksum(packet_without_checksum: &[u8]) -> u8 {
@@ -112,7 +120,7 @@ pub fn encode_packet(input: &EncodeInput) -> Result<(String, Vec<u8>), EncodeErr
         EncodeInput::Tlv(t) => encode_tlv(t)?,
         EncodeInput::Aabb(a) => encode_aabb(a)?,
     };
-    Ok((hex::encode(&buffer), buffer))
+    Ok((crate::hex::encode(&buffer), buffer))
 }
 
 fn encode_tlv(input: &TlvEncodeInput) -> Result<Vec<u8>, EncodeError> {
@@ -160,7 +168,8 @@ fn encode_tlv(input: &TlvEncodeInput) -> Result<Vec<u8>, EncodeError> {
 }
 
 fn encode_aabb(input: &AabbEncodeInput) -> Result<Vec<u8>, EncodeError> {
-    let inner = hex::decode(input.body_hex.replace(' ', "")).map_err(|e| EncodeError::InvalidHex(e.to_string()))?;
+    let inner = crate::hex::decode(&input.body_hex.replace(' ', ""))
+        .map_err(|e| EncodeError::InvalidHex(e.to_string()))?;
     let mut head = vec![0xaa, (inner.len() + 4) as u8];
     head.extend_from_slice(&inner);
     let checksum = aabb_checksum(&head);
@@ -171,7 +180,7 @@ fn encode_aabb(input: &AabbEncodeInput) -> Result<Vec<u8>, EncodeError> {
 
 pub fn decode_packet(hex_str: &str) -> Decoded {
     let cleaned: String = hex_str.chars().filter(|c| !c.is_whitespace()).collect();
-    let buf = match hex::decode(&cleaned) {
+    let buf = match crate::hex::decode(&cleaned) {
         Ok(b) => b,
         Err(_) => {
             return Decoded::Unknown(DecodedUnknown {
@@ -187,7 +196,7 @@ pub fn decode_packet(hex_str: &str) -> Decoded {
         return Decoded::Aabb(DecodedAabb {
             checksum_ok: buf[buf.len() - 2] == expected,
             length: buf[1],
-            body: hex::encode(&buf[2..buf.len() - 2]),
+            body: crate::hex::encode(&buf[2..buf.len() - 2]),
         });
     }
 

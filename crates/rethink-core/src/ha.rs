@@ -1,7 +1,7 @@
 //! Home Assistant MQTT discovery types and connection trait.
 
 use crate::config::HaConfig;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};

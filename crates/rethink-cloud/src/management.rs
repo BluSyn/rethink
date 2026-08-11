@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use include_dir::{include_dir, Dir};
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_bridge::Bridge;
 use rethink_core::ha::HaConnection;
 use rethink_util::packet_codec::{decode_packet, Decoded, Direction};
@@ -94,14 +94,14 @@ impl FrameLog {
         let id = dev.id.clone();
         let log = self.clone();
         dev.add_data_handler(move |buf| {
-            log.push(&id, "rx", hex::encode(buf), false);
+            log.push(&id, "rx", rethink_util::hex::encode(buf), false);
         });
         let id2 = dev.id.clone();
         let log2 = self.clone();
         dev.add_send_handler(move |msg| {
             match msg {
                 SendToDevice::T2Packet(b) => {
-                    log2.push(&id2, "tx", hex::encode(b), false);
+                    log2.push(&id2, "tx", rethink_util::hex::encode(b), false);
                 }
                 SendToDevice::T2Clip { cmd, msg_type, data } => {
                     let s = json!({"cmd": cmd, "type": msg_type, "data": data}).to_string();
@@ -289,7 +289,7 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                             let tx = data_tx.clone();
                             d.add_data_handler(move |buf| {
                                 let _ = tx.send(json!({
-                                    "rx": hex::encode(buf),
+                                    "rx": rethink_util::hex::encode(buf),
                                     "injected": false,
                                     "ts": FrameLog::now_ms(),
                                 }).to_string());
@@ -298,7 +298,7 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                             d.add_send_handler(move |msg| {
                                 let tx_val = match msg {
                                     SendToDevice::T2Packet(b) => json!({
-                                        "tx": hex::encode(b),
+                                        "tx": rethink_util::hex::encode(b),
                                         "injected": false,
                                         "ts": FrameLog::now_ms(),
                                     }),
@@ -336,7 +336,7 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                         if let Ok(v) = serde_json::from_str::<Value>(&t) {
                             if let Some(dev) = state.manager.get(&id) {
                                 if let Some(s) = v.get("sendToDevice").and_then(|x| x.as_str()) {
-                                    if let Ok(buf) = hex::decode(s) {
+                                    if let Ok(buf) = rethink_util::hex::decode(s) {
                                         // Mark inject in the ring buffer (send handlers also log a live copy).
                                         state.frame_log.push(&id, "tx", s.to_string(), true);
                                         (dev.send_to_device)(SendToDevice::T2Packet(buf));
@@ -346,7 +346,7 @@ async fn handle_device_ws(mut socket: WebSocket, state: MgmtState, id: String) {
                                     (dev.send_to_device)(SendToDevice::T1Json(obj.clone()));
                                 }
                                 if let Some(s) = v.get("sendFromDevice").and_then(|x| x.as_str()) {
-                                    if let Ok(buf) = hex::decode(s) {
+                                    if let Ok(buf) = rethink_util::hex::decode(s) {
                                         state.frame_log.push(&id, "rx", s.to_string(), true);
                                         (dev.emit_data)(buf);
                                     }
@@ -467,6 +467,24 @@ async fn bridge_disable(
     StatusCode::NO_CONTENT
 }
 
+fn mime_for_path(path: &str) -> &'static str {
+    match path.rsplit('.').next().unwrap_or("").to_ascii_lowercase().as_str() {
+        "html" | "htm" => "text/html; charset=utf-8",
+        "js" | "mjs" => "application/javascript; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "json" => "application/json",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ico" => "image/x-icon",
+        "txt" | "md" => "text/plain; charset=utf-8",
+        "map" => "application/json",
+        _ => "application/octet-stream",
+    }
+}
+
 async fn static_file(uri: axum::http::Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
     let path = if path.is_empty() { "index.html" } else { path };
@@ -474,9 +492,7 @@ async fn static_file(uri: axum::http::Uri) -> Response {
     let candidates = [path, &format!("{path}.html")];
     for c in candidates {
         if let Some(file) = HTML.get_file(c) {
-            let mime = mime_guess::from_path(c)
-                .first_or_octet_stream()
-                .to_string();
+            let mime = mime_for_path(c);
             return (
                 StatusCode::OK,
                 [(header::CONTENT_TYPE, mime)],
@@ -525,7 +541,7 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
     if hex.is_empty() {
         return Err("empty hex".into());
     }
-    let bytes = hex::decode(&hex).map_err(|e| format!("hex decode: {e}"))?;
+    let bytes = rethink_util::hex::decode(&hex).map_err(|e| format!("hex decode: {e}"))?;
     let requested_dir = match direction.unwrap_or("fromDevice") {
         "toDevice" | "to" | "tx" => "toDevice",
         _ => "fromDevice",
@@ -583,7 +599,7 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
             protocol = "Aabb".into();
             aabb_body = Some(a.body.clone());
             crc_ok = Some(a.checksum_ok);
-            let body_bytes = hex::decode(&a.body).unwrap_or_default();
+            let body_bytes = rethink_util::hex::decode(&a.body).unwrap_or_default();
             let analysis =
                 analyze_aabb_body(&body_bytes, bytes.len(), a.length, Some(a.checksum_ok));
             if let Some(k) = analysis.kind {
@@ -618,7 +634,7 @@ fn decode_hex_payload(hex_in: &str, direction: Option<&str>) -> Result<Value, St
                     let end = (start + len).min(bytes.len().saturating_sub(2));
                     if end > start {
                         let body = &bytes[start..end];
-                        aabb_body = Some(hex::encode(body));
+                        aabb_body = Some(rethink_util::hex::encode(body));
                         let crc = if u.reason.contains("crc_ok=true") {
                             Some(true)
                         } else if u.reason.contains("crc_ok=false") {
@@ -756,7 +772,7 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
         {
             // Re-analyze from body for stable text (same pattern as UartBinary)
             if let Some(body_hex) = ba.get("body_hex").and_then(|v| v.as_str()) {
-                let raw = hex::decode(body_hex).unwrap_or_default();
+                let raw = rethink_util::hex::decode(body_hex).unwrap_or_default();
                 let len_byte = ba
                     .get("length_byte")
                     .and_then(|v| v.as_u64())
@@ -774,7 +790,7 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
                     &analysis,
                 )
             } else if let Some(body_h) = decoded.get("aabbBody").and_then(|v| v.as_str()) {
-                let raw = hex::decode(body_h).unwrap_or_default();
+                let raw = rethink_util::hex::decode(body_h).unwrap_or_default();
                 let analysis = analyze_aabb_body(&raw, hex.len() / 2, 0, None);
                 aabb_export_text(
                     body.model_id.as_deref(),
@@ -786,7 +802,7 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
                 format!("# ThinQ AABB frame\nhex: {hex}\n")
             }
         } else if let Some(body_h) = decoded.get("aabbBody").and_then(|v| v.as_str()) {
-            let raw = hex::decode(body_h).unwrap_or_default();
+            let raw = rethink_util::hex::decode(body_h).unwrap_or_default();
             let analysis = analyze_aabb_body(&raw, hex.len() / 2, 0, None);
             aabb_export_text(
                 body.model_id.as_deref(),
@@ -820,7 +836,7 @@ async fn api_re_export(Json(body): Json<ExportBody>) -> Response {
                 ba.pointer("/envelope/byte7").and_then(|v| v.as_u64()),
                 ba.get("body_hex").and_then(|v| v.as_str()),
             ) {
-                let raw_body = hex::decode(body_hex).unwrap_or_default();
+                let raw_body = rethink_util::hex::decode(body_hex).unwrap_or_default();
                 let crc = ba.pointer("/envelope/crc_ok").and_then(|v| v.as_bool());
                 let analysis = analyze_uart_binary(
                     kind as u8,
@@ -1026,7 +1042,7 @@ mod tests {
     fn decode_known_tlv_query_style() {
         // Tags are 10-bit; use 0x3fe as a deliberately uncatalogued tag.
         let tlv_bytes = tlv::build(&[tlv::Tlv::new(0x1f7, 1), tlv::Tlv::new(0x3fe, 42)]);
-        let hex = hex::encode(&tlv_bytes);
+        let hex = rethink_util::hex::encode(&tlv_bytes);
         let v = re_decode_for_test(&hex, Some("fromDevice")).unwrap();
         assert_eq!(v["ok"], true);
         let els = v["elements"].as_array().unwrap();
@@ -1038,7 +1054,7 @@ mod tests {
     #[test]
     fn export_includes_llm_section() {
         let tlv_bytes = tlv::build(&[tlv::Tlv::new(0x1f7, 1), tlv::Tlv::new(0x3fe, 9)]);
-        let text = re_export_for_test(&hex::encode(&tlv_bytes), Some("HUM_056905_WW")).unwrap();
+        let text = re_export_for_test(&rethink_util::hex::encode(&tlv_bytes), Some("HUM_056905_WW")).unwrap();
         assert!(text.contains("UNKNOWN") || text.contains("Unknown"));
         assert!(text.contains("HUM_056905_WW"));
         assert!(text.contains("0x3fe") || text.contains("3fe"));

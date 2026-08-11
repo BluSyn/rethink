@@ -1,7 +1,6 @@
 //! Config loading and normalization (JSONC-compatible).
 
 use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HaConfig {
@@ -99,12 +98,34 @@ pub struct Config {
     pub log: Vec<String>,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum ConfigError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("JSON parse error: {0}")]
+    Io(std::io::Error),
     Json(String),
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(e) => write!(f, "IO error: {e}"),
+            Self::Json(s) => write!(f, "JSON parse error: {s}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(e) => Some(e),
+            Self::Json(_) => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for ConfigError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 pub fn normalize(raw: RawConfig) -> Config {

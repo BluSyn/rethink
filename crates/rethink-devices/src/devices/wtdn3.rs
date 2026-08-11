@@ -2,7 +2,7 @@
 
 use crate::device_trait::DeviceHandler;
 use crate::washer_common::{course_name, drying_mode, ERRORS, SPINS, STATES, TEMPERATURES};
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::device_base::default_config;
 use rethink_core::ha::{HaConnection, PropertyValue};
 use rethink_core::metadata::Metadata;

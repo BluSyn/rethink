@@ -5,7 +5,7 @@ use crate::fridge_common::{
     convert_freezer_temperature, convert_fridge_temperature, freezer_range, fridge_range,
     pack_status, status_get, unpack_status, Status, TemperatureUnit,
 };
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
 use rethink_core::hex_decode;
 use rethink_core::{HaConnection, Metadata, Thinq2Device};

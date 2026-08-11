@@ -2,7 +2,7 @@
 
 use crate::device_trait::DeviceHandler;
 use crate::fridge_common::*;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
 use rethink_core::ha::{HaConnection, PropertyValue};
 use rethink_core::metadata::Metadata;
@@ -112,7 +112,7 @@ impl Device {
     }
 
     fn send_setting(&self, setting: &Status) {
-        let mut payload = hex::decode("F017").unwrap();
+        let mut payload = rethink_util::hex::decode("F017").unwrap();
         payload.extend_from_slice(&pack_status(setting, STATUS_LENGTH));
         self.core.send(&payload);
     }
@@ -124,7 +124,7 @@ impl DeviceHandler for Device {
     }
     fn start(&self) {
         self.core
-            .send(&hex::decode("F0ED1211010000010400").unwrap());
+            .send(&rethink_util::hex::decode("F0ED1211010000010400").unwrap());
     }
     fn drop_device(&self) {
         self.core.drop_device();

@@ -17,7 +17,7 @@ pub mod util;
 pub use state::{BridgeState, Credentials, Environment, JsonStorage};
 pub use util::{subprocess, SubprocessError, SubprocessOptions};
 
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use pair::{Thinq1DeviceState, Thinq2DeviceState};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};

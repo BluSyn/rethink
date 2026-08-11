@@ -5,7 +5,7 @@ use crate::fridge_common::{
     convert_freezer_temperature, convert_fridge_temperature, freezer_range, fridge_range,
     TemperatureUnit,
 };
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
 use rethink_core::ha::{HaConnection, PropertyValue};
 use rethink_core::metadata::Metadata;
@@ -154,14 +154,14 @@ impl DeviceHandler for Device {
     }
     fn start(&self) {
         self.core
-            .send(&hex::decode("F0ED1211010000010400").unwrap());
+            .send(&rethink_util::hex::decode("F0ED1211010000010400").unwrap());
     }
     fn drop_device(&self) {
         self.core.drop_device();
     }
     fn set_property(&self, prop: &str, mqtt_value: &str) {
         let unit = self.temperature_unit.lock().unwrap_or(TemperatureUnit::C);
-        let mut base = hex::decode(
+        let mut base = rethink_util::hex::decode(
             "F017FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000FFFF00FFFFFFFF00FFFFFFFFFFFFFFFFFF00FFFFFF1EFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0AFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
         )
         .unwrap();

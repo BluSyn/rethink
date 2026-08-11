@@ -145,7 +145,7 @@ pub fn analyze_aabb_body(
 
     // Host command F0 ED … (monitor enable / set)
     if body.len() >= 2 && body[0] == 0xf0 {
-        let hx = hex::encode(body);
+        let hx = crate::hex::encode(body);
         if body == hex_decode_static("f0ed1121010000001800") {
             fields.push(AabbField {
                 name: "monitor_enable",
@@ -207,7 +207,7 @@ pub fn analyze_aabb_body(
         packet_len,
         length_byte,
         checksum_ok,
-        body_hex: hex::encode(body),
+        body_hex: crate::hex::encode(body),
         body_len: body.len(),
         kind,
         frame_type,
@@ -219,7 +219,7 @@ pub fn analyze_aabb_body(
 }
 
 fn hex_decode_static(s: &str) -> Vec<u8> {
-    hex::decode(s).unwrap_or_default()
+    crate::hex::decode(s).unwrap_or_default()
 }
 
 /// Compact AABB breakdown for text export / multi-frame paste.
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn analyzes_rh10_monitor_enable() {
-        let body = hex::decode("f0ed1121010000001800").unwrap();
+        let body = crate::hex::decode("f0ed1121010000001800").unwrap();
         let a = analyze_aabb_body(&body, 14, 0x0e, Some(true));
         assert_eq!(a.kind, Some(0xf0));
         assert!(a.fields.iter().any(|f| f.name == "monitor_enable"));
@@ -298,7 +298,7 @@ mod tests {
     #[test]
     fn analyzes_rh10_single_status_off() {
         // body from live capture #3
-        let body = hex::decode(
+        let body = crate::hex::decode(
             "30eb001900000000000000000000000000000000000000000000007500",
         )
         .unwrap();
@@ -319,7 +319,7 @@ mod tests {
 
     #[test]
     fn analyzes_rh10_dual_status() {
-        let body = hex::decode(
+        let body = crate::hex::decode(
             "30ec001900000000000000000000000000000000000000000000007500001900000000000000000000000000000000000000000000007500",
         )
         .unwrap();

@@ -303,7 +303,7 @@ async fn main() -> Result<()> {
         ha_bridge: ha_bridge.clone(),
         manager: manager.clone(),
         bridge: lg_bridge.clone(),
-        subscribers: Arc::new(parking_lot::Mutex::new(Vec::new())),
+        subscribers: Arc::new(rethink_util::sync::Mutex::new(Vec::new())),
         frame_log: frame_log.clone(),
     };
 

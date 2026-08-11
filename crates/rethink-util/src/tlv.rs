@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn parse_vector_from_real_capture() {
-        let buf = hex::decode("7E427DC17E837F502D7F902A").unwrap();
+        let buf = crate::hex::decode("7E427DC17E837F502D7F902A").unwrap();
         let out = parse(&buf);
         let expected = [
             (0x1f9u16, 2u32),

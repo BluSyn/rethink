@@ -3,7 +3,7 @@
 use super::connection::{run_connection_with_acks, T1ConnectionEvents};
 use super::http::MetaStore;
 use crate::devmgr::{ConnectedDevice, DeviceManager, Platform, SendToDevice};
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

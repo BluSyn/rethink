@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     if args.len() == 3 && (args[1] == "-message" || args[1] == "-message-raw") {
         let raw = args[1] == "-message-raw";
-        let buf = hex::decode(args[2].chars().filter(|c| !c.is_whitespace()).collect::<String>())?;
+        let buf = rethink_util::hex::decode(args[2].chars().filter(|c| !c.is_whitespace()).collect::<String>())?;
         print_tlv(&buf, raw);
         return Ok(());
     }
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
                     if v.get("cmd").and_then(|c| c.as_str()) == Some("device_packet") {
                         if let Some(data) = v.get("data").and_then(|d| d.as_str()) {
                             println!("{} {}", chrono_like_now(), data);
-                            match hex::decode(data) {
+                            match rethink_util::hex::decode(data) {
                                 Ok(buf) => print_tlv(&buf, false),
                                 Err(e) => println!("{e}"),
                             }

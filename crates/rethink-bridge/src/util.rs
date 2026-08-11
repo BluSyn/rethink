@@ -2,7 +2,6 @@
 
 use std::process::Stdio;
 use std::time::Duration;
-use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -18,9 +17,16 @@ pub struct SubprocessOptions {
     pub max_stderr_bytes: Option<usize>,
 }
 
-#[derive(Debug, Error)]
-#[error("{0}")]
+#[derive(Debug)]
 pub struct SubprocessError(pub String);
+
+impl std::fmt::Display for SubprocessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for SubprocessError {}
 
 fn sanitize_diagnostic(stderr: &[u8]) -> String {
     if stderr.is_empty() {

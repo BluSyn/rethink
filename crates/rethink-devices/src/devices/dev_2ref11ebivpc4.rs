@@ -157,7 +157,7 @@ impl DeviceHandler for Device {
         self.core.drop_device();
     }
     fn set_property(&self, prop: &str, mqtt_value: &str) {
-        let mut base = hex::decode(
+        let mut base = rethink_util::hex::decode(
             "F017FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF000000FFFF00FFFFFFFF00FFFFFFFFFFFFFFFFFF00FFFFFF1EFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF0AFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
         )
         .unwrap();

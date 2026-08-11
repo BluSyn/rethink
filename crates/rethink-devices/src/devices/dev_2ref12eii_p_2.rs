@@ -213,7 +213,7 @@ impl Device {
         "f017ffffffffffffffffffffffffffffffffffffffffff000000ffff00ffffffff00ffffffffffffffffff";
 
     fn base_f017() -> [u8; 43] {
-        let v = hex::decode(Self::F017_BASE_HEX).expect("F017 base hex");
+        let v = rethink_util::hex::decode(Self::F017_BASE_HEX).expect("F017 base hex");
         let mut b = [0u8; 43];
         b.copy_from_slice(&v);
         b
@@ -226,7 +226,7 @@ impl DeviceHandler for Device {
     }
     fn start(&self) {
         self.core
-            .send(&hex::decode("f0ed1211010000010400").unwrap());
+            .send(&rethink_util::hex::decode("f0ed1211010000010400").unwrap());
     }
     fn drop_device(&self) {
         self.core.drop_device();

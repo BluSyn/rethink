@@ -32,16 +32,13 @@ rethink-devices = { path = "crates/rethink-devices" }
 rethink-bridge = { path = "crates/rethink-bridge" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 bytes = "1"
-hex = "0.4"
 base64 = "0.22"
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
 rustls = "0.23"
 tokio-rustls = "0.26"
 rustls-pemfile = "2"
@@ -51,15 +48,9 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 clap = { version = "4", features = ["derive"] }
-jsonc-parser = "0.26"
-parking_lot = "0.12"
-async-trait = "0.1"
-futures = "0.3"
-quick-xml = { version = "0.37", features = ["serialize"] }
 sha2 = "0.10"
 hmac = "0.12"
 url = "2"
-mime_guess = "2"
 include_dir = "0.7"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "service"] }

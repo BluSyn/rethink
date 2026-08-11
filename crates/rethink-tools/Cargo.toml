@@ -34,7 +34,6 @@ serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
-hex = { workspace = true }
 rumqttc = { workspace = true }
 ureq = { version = "2", default-features = false, features = ["tls", "json"] }
 tungstenite = { version = "0.24", default-features = false, features = ["handshake"] }

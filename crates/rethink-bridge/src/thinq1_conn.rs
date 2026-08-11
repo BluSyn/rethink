@@ -17,7 +17,7 @@ pub struct Thinq1Handle {
     write_tx: mpsc::UnboundedSender<Vec<u8>>,
     is_live: Arc<AtomicBool>,
     device_id: String,
-    last_state: Arc<parking_lot::Mutex<Option<Vec<u8>>>>,
+    last_state: Arc<rethink_util::sync::Mutex<Option<Vec<u8>>>>,
     stopped: Arc<AtomicBool>,
 }
 
@@ -27,7 +27,7 @@ impl Thinq1Handle {
             return;
         }
         *self.last_state.lock() = Some(data.to_vec());
-        eprintln!("[bridge] {} -> {}", self.device_id, hex::encode(data));
+        eprintln!("[bridge] {} -> {}", self.device_id, rethink_util::hex::encode(data));
         if !self.is_live.load(Ordering::SeqCst) {
             return;
         }
@@ -91,7 +91,7 @@ pub async fn connect_thinq1(
     let (from_lg_tx, from_lg_rx) = mpsc::unbounded_channel();
     let is_live = Arc::new(AtomicBool::new(false));
     let stopped = Arc::new(AtomicBool::new(false));
-    let last_state = Arc::new(parking_lot::Mutex::new(None::<Vec<u8>>));
+    let last_state = Arc::new(rethink_util::sync::Mutex::new(None::<Vec<u8>>));
 
     let did = device_id.to_string();
     tokio::spawn(async move {
@@ -173,7 +173,7 @@ fn handle_lg_json(
     j: &serde_json::Value,
     device_id: &str,
     is_live: &AtomicBool,
-    last_state: &parking_lot::Mutex<Option<Vec<u8>>>,
+    last_state: &rethink_util::sync::Mutex<Option<Vec<u8>>>,
     write_tx: &mpsc::UnboundedSender<Vec<u8>>,
     from_lg: &mpsc::UnboundedSender<serde_json::Value>,
 ) {

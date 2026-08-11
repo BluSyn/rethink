@@ -36,8 +36,8 @@ pub struct Client {
 
 impl Client {
     pub fn new(env: Environment) -> Self {
-        let client_id = hex::encode(uuid::Uuid::new_v4().as_bytes())
-            + &hex::encode(uuid::Uuid::new_v4().as_bytes());
+        let client_id = rethink_util::hex::encode(uuid::Uuid::new_v4().as_bytes())
+            + &rethink_util::hex::encode(uuid::Uuid::new_v4().as_bytes());
         let mut headers = HashMap::new();
         headers.insert(
             "content-type".into(),
@@ -80,7 +80,7 @@ impl Client {
             for (k, v) in &self.headers {
                 req = req.header(k, v);
             }
-            req = req.header("x-message-id", hex::encode(uuid::Uuid::new_v4().as_bytes()));
+            req = req.header("x-message-id", rethink_util::hex::encode(uuid::Uuid::new_v4().as_bytes()));
             if let Some(ref b) = body {
                 req = req.json(b);
             }

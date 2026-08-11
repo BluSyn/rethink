@@ -1,6 +1,6 @@
 //! Device manager — tracks connected ThinQ1/2 appliances.
 
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::metadata::Metadata;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -1,7 +1,7 @@
 //! STUDIO_HOOD — LG range hood (deviceType 304), AABB 0x43 status (PR #120).
 
 use crate::device_trait::DeviceHandler;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
 use rethink_core::ha::{HaConnection, PropertyValue};
 use rethink_core::metadata::Metadata;
@@ -128,7 +128,7 @@ impl DeviceHandler for Device {
     }
     fn start(&self) {
         self.core
-            .send(&hex::decode("f0ed114101000000180403040000").unwrap());
+            .send(&rethink_util::hex::decode("f0ed114101000000180403040000").unwrap());
     }
     fn drop_device(&self) {
         self.core.drop_device();

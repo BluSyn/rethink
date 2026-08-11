@@ -42,7 +42,7 @@ mod tests {
     #[test]
     fn crc16_matches_captured_packet() {
         // Frame: "01010400000065020101077E447E837F902AF936"
-        let body = hex::decode("0400000065020101077E447E837F902A").unwrap();
+        let body = crate::hex::decode("0400000065020101077E447E837F902A").unwrap();
         assert_eq!(crc16(&body), 0xf936);
     }
 }

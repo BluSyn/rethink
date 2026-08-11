@@ -1,7 +1,7 @@
 //! Minimal MQTT 3.1.1 broker for ThinQ device connections (port of cloud/mqtt-broker.ts).
 
 use bytes::{Buf, BufMut, BytesMut};
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};

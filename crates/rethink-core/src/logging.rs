@@ -1,6 +1,6 @@
 //! Simple topic-filtered logging (mirrors util/logging.ts).
 
-use parking_lot::RwLock;
+use rethink_util::sync::RwLock;
 use std::sync::OnceLock;
 
 static FILTER: OnceLock<RwLock<Box<dyn Fn(&str) -> bool + Send + Sync>>> = OnceLock::new();

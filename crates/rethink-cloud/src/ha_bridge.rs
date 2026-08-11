@@ -1,7 +1,7 @@
 //! Wire connected ThinQ devices to HA device handlers via the registry.
 
 use crate::devmgr::{ConnectedDevice, Platform};
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::ha::HaConnection;
 use rethink_core::thinq::{Thinq1Device, Thinq2Device};
 use rethink_devices::device_trait::DeviceHandler;

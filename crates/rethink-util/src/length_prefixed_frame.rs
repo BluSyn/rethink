@@ -1,16 +1,23 @@
 //! Length-prefixed frames: 4-byte big-endian length + payload (ThinQ1).
 
-use thiserror::Error;
-
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum FrameError {
-    #[error("Payload length cannot be negative")]
     NegativeLength,
-    #[error("Payload length exceeded")]
     PayloadExceeded,
-    #[error("Truncated length-prefixed frame")]
     Truncated,
 }
+
+impl std::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NegativeLength => f.write_str("Payload length cannot be negative"),
+            Self::PayloadExceeded => f.write_str("Payload length exceeded"),
+            Self::Truncated => f.write_str("Truncated length-prefixed frame"),
+        }
+    }
+}
+
+impl std::error::Error for FrameError {}
 
 /// Build a length-prefixed frame from payload bytes.
 pub fn make(input: &[u8]) -> Vec<u8> {

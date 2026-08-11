@@ -317,7 +317,7 @@ pub fn parse_lg_packet_payload(json: &serde_json::Value) -> Option<Vec<u8>> {
         return None;
     }
     let data = json.get("data").and_then(|v| v.as_str())?;
-    hex::decode(data).ok()
+    rethink_util::hex::decode(data).ok()
 }
 
 #[cfg(test)]

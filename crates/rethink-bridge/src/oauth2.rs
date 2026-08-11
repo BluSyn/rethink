@@ -80,7 +80,7 @@ pub struct Token {
 }
 
 pub async fn from_code(auth_url: &str, code: &str) -> anyhow::Result<Token> {
-    let sso_id = hex::encode(uuid::Uuid::new_v4().as_bytes());
+    let sso_id = rethink_util::hex::encode(uuid::Uuid::new_v4().as_bytes());
     let body = format!(
         "code={}&grant_type=authorization_code&redirect_uri={}&sso_id={}",
         urlencoding(&code),

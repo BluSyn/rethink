@@ -6,7 +6,7 @@ use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::Router;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::config::Config;
 use rethink_core::metadata::Metadata;
 use serde_json::Value;

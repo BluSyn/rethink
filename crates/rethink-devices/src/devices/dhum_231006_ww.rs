@@ -2,7 +2,7 @@
 //! with different mode/fan tables verified against LG cloud decode.
 
 use crate::device_trait::DeviceHandler;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::device_base::{default_config, FieldDefinition, TlvDeviceCore};
 use rethink_core::ha::{DeviceDiscovery, HaConnection, PropertyValue};
 use rethink_core::metadata::Metadata;

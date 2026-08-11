@@ -24,7 +24,7 @@ impl Thinq2Handle {
         if self.stopped.load(Ordering::SeqCst) {
             return Ok(());
         }
-        let hex_data = hex::encode_upper(data);
+        let hex_data = rethink_util::hex::encode_upper(data);
         eprintln!("[bridge] {} -> {hex_data}", self.device_id);
         let m = self.mid.fetch_add(1, Ordering::SeqCst) + 1;
         let payload = format_device_packet(m, &self.device_id, &self.model_name, &hex_data);
@@ -120,7 +120,7 @@ pub async fn connect_thinq2(
                             .await;
                     }
                     if let Some(buf) = parse_lg_packet_payload(&payload) {
-                        eprintln!("[bridge] {did} <- {}", hex::encode(&buf));
+                        eprintln!("[bridge] {did} <- {}", rethink_util::hex::encode(&buf));
                         if tx.send(buf).is_err() {
                             break;
                         }

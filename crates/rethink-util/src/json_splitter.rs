@@ -1,15 +1,23 @@
 //! Incremental JSON object/array splitter (brace depth tracking with string awareness).
 
 use serde_json::Value;
-use thiserror::Error;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum JsonSplitError {
-    #[error("Invalid JSON: too many closing tokens")]
     TooManyClosing,
-    #[error("JSON parse error: {0}")]
     Parse(String),
 }
+
+impl std::fmt::Display for JsonSplitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::TooManyClosing => f.write_str("Invalid JSON: too many closing tokens"),
+            Self::Parse(s) => write!(f, "JSON parse error: {s}"),
+        }
+    }
+}
+
+impl std::error::Error for JsonSplitError {}
 
 /// Incremental JSON stream splitter — feeds bytes, emits complete top-level values.
 pub struct Splitter {

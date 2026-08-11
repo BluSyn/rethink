@@ -1,7 +1,7 @@
 //! RH10V9_CH heat-pump dryer (AABB).
 
 use crate::device_trait::DeviceHandler;
-use parking_lot::Mutex;
+use rethink_util::sync::Mutex;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
 use rethink_core::hex_decode;
 use rethink_core::{HaConnection, Metadata, Thinq2Device};
