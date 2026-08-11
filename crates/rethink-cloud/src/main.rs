@@ -156,89 +156,101 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Device-facing TLS (HTTPS + MQTTS): OpenSSL with legacy CBC-SHA / TLS1.0
+    // so RTK_RTL8711am and similar CLIP modules can complete handshake (PR#131).
+    let device_tls = match certs::device_ssl_acceptor(&ca) {
+        Ok(a) => {
+            eprintln!("[status] device TLS: OpenSSL legacy profile (TLS1.0+, SECLEVEL=0)");
+            Some(a)
+        }
+        Err(e) => {
+            eprintln!("[status] device OpenSSL TLS config failed: {e:#}");
+            None
+        }
+    };
+
     // MQTTS
-    {
+    if let Some(ssl_acceptor) = device_tls.clone() {
         let b = broker.clone();
         let port = config.mqtts_port.bind;
-        match certs::server_config(&ca) {
-            Ok(tls_cfg) => {
-                let acceptor = tokio_rustls::TlsAcceptor::from(tls_cfg);
-                tokio::spawn(async move {
-                    match TcpListener::bind(("0.0.0.0", port)).await {
-                        Ok(listener) => {
-                            eprintln!("[status] MQTTS listening on {port}");
-                            loop {
-                                match listener.accept().await {
-                                    Ok((stream, _)) => {
-                                        let acceptor = acceptor.clone();
-                                        let b = b.clone();
-                                        tokio::spawn(async move {
-                                            match acceptor.accept(stream).await {
-                                                Ok(tls) => b.accept_tls(tls).await,
-                                                Err(e) => {
-                                                    tracing::debug!("TLS accept: {e}");
-                                                }
-                                            }
-                                        });
+        tokio::spawn(async move {
+            match TcpListener::bind(("0.0.0.0", port)).await {
+                Ok(listener) => {
+                    eprintln!("[status] MQTTS listening on {port} (legacy device TLS)");
+                    loop {
+                        match listener.accept().await {
+                            Ok((stream, peer)) => {
+                                let ssl_acceptor = ssl_acceptor.clone();
+                                let b = b.clone();
+                                tokio::spawn(async move {
+                                    match certs::accept_device_tls(&ssl_acceptor, stream).await {
+                                        Ok(tls) => b.accept_tls(tls).await,
+                                        Err(e) => {
+                                            tracing::debug!(
+                                                %peer,
+                                                "MQTTS TLS accept failed (legacy module?): {e:#}"
+                                            );
+                                        }
                                     }
-                                    Err(e) => {
-                                        eprintln!("[status] MQTTS accept error: {e}");
-                                        break;
-                                    }
-                                }
+                                });
+                            }
+                            Err(e) => {
+                                eprintln!("[status] MQTTS accept error: {e}");
+                                break;
                             }
                         }
-                        Err(e) => eprintln!("[status] MQTTS bind failed on {port}: {e}"),
                     }
-                });
+                }
+                Err(e) => eprintln!("[status] MQTTS bind failed on {port}: {e}"),
             }
-            Err(e) => eprintln!("[status] TLS config failed: {e}"),
-        }
+        });
     }
 
-    // HTTPS ThinQ2 provisioning
-    {
+    // HTTPS ThinQ2 provisioning (/route, certificate, …)
+    if let Some(ssl_acceptor) = device_tls.clone() {
         let port = config.https_port.bind;
         let ca = Arc::new(ca.clone());
         let cfg = Arc::new(config.clone());
         let router = thinq2::provisioning::routes(cfg, ca.clone());
-        match certs::server_config(&ca) {
-            Ok(tls_cfg) => {
-                let acceptor = tokio_rustls::TlsAcceptor::from(tls_cfg);
-                tokio::spawn(async move {
-                    match TcpListener::bind(("0.0.0.0", port)).await {
-                        Ok(listener) => {
-                            eprintln!("[status] HTTPS listening on {port}");
-                            loop {
-                                match listener.accept().await {
-                                    Ok((stream, _)) => {
-                                        let acceptor = acceptor.clone();
-                                        let router = router.clone();
-                                        tokio::spawn(async move {
-                                            if let Ok(tls) = acceptor.accept(stream).await {
-                                                let _ = hyper_util::server::conn::auto::Builder::new(
-                                                    hyper_util::rt::TokioExecutor::new(),
-                                                )
-                                                .serve_connection(
-                                                    hyper_util::rt::TokioIo::new(tls),
-                                                    hyper_util::service::TowerToHyperService::new(
-                                                        router,
-                                                    ),
-                                                )
-                                                .await;
-                                            }
-                                        });
+        tokio::spawn(async move {
+            match TcpListener::bind(("0.0.0.0", port)).await {
+                Ok(listener) => {
+                    eprintln!("[status] HTTPS listening on {port} (legacy device TLS)");
+                    loop {
+                        match listener.accept().await {
+                            Ok((stream, peer)) => {
+                                let ssl_acceptor = ssl_acceptor.clone();
+                                let router = router.clone();
+                                tokio::spawn(async move {
+                                    match certs::accept_device_tls(&ssl_acceptor, stream).await {
+                                        Ok(tls) => {
+                                            let _ = hyper_util::server::conn::auto::Builder::new(
+                                                hyper_util::rt::TokioExecutor::new(),
+                                            )
+                                            .serve_connection(
+                                                hyper_util::rt::TokioIo::new(tls),
+                                                hyper_util::service::TowerToHyperService::new(
+                                                    router,
+                                                ),
+                                            )
+                                            .await;
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!(
+                                                %peer,
+                                                "HTTPS TLS accept failed (legacy module?): {e:#}"
+                                            );
+                                        }
                                     }
-                                    Err(_) => break,
-                                }
+                                });
                             }
+                            Err(_) => break,
                         }
-                        Err(e) => eprintln!("[status] HTTPS bind failed on {port}: {e}"),
                     }
-                });
+                }
+                Err(e) => eprintln!("[status] HTTPS bind failed on {port}: {e}"),
             }
-            Err(e) => eprintln!("[status] HTTPS TLS config failed: {e}"),
-        }
+        });
     }
 
     // ThinQ1 HTTP

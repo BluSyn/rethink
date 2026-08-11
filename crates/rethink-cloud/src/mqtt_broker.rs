@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio_rustls::server::TlsStream;
 use tracing::{debug, warn};
 
 #[derive(Debug, Clone)]
@@ -205,8 +204,11 @@ impl Broker {
         self.handle_connection(stream).await;
     }
 
-    /// Accept a TLS stream as an MQTT client.
-    pub async fn accept_tls(self: &Arc<Self>, stream: TlsStream<TcpStream>) {
+    /// Accept any TLS-wrapped stream (rustls or OpenSSL) as an MQTT client.
+    pub async fn accept_tls<S>(self: &Arc<Self>, stream: S)
+    where
+        S: AsyncReadExt + AsyncWriteExt + Unpin + Send + 'static,
+    {
         self.handle_connection(stream).await;
     }
 

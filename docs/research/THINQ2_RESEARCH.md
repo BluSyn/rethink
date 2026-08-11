@@ -58,7 +58,7 @@ Last updated: 2026-08-10. Sources are named with the capability or model they co
 
 | PR | Title | Contribution | Rust status |
 |----|-------|--------------|-------------|
-| #131 | SoftAP + legacy TLS for RTK_RTL8711am | Provisioning + weak ciphers | Partially present in setup/TLS work |
+| #131 | SoftAP + legacy TLS for RTK_RTL8711am | Provisioning + weak ciphers | **Rust cloud:** OpenSSL device TLS (`SECLEVEL=0`, TLS1.0+) on HTTPS/MQTTS; SoftAP extras in setup |
 | #130 | RH10V9_CH heat-pump dryer | AABB dryer status | **Registered** |
 | #129 | CST_570004_WW cassette AC | RAC alias + 0xa7 + humidity 0x336 | **Registered** (alias + a7 codec) |
 | #128 | F_VA_F___W.B__QEUK washer | Alias → F_V__F handler | **Registered** |

@@ -108,6 +108,10 @@ fn create_with_rcgen(hostname: &str, key_path: &Path, cert_path: &Path) -> Resul
 }
 
 /// Build a rustls ServerConfig from the CA PEMs (server = CA for rethink).
+///
+/// Prefer [`device_ssl_acceptor`] for appliance-facing HTTPS/MQTTS — many CLIP
+/// modules (RTK_RTL8711am) only offer legacy CBC-SHA suites that rustls rejects.
+#[allow(dead_code)] // kept for non-device TLS uses / tests
 pub fn server_config(ca: &Ca) -> Result<Arc<ServerConfig>> {
     let mut cert_reader = std::io::Cursor::new(ca.cert_pem.as_bytes());
     let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut cert_reader)
@@ -122,6 +126,59 @@ pub fn server_config(ca: &Ca) -> Result<Arc<ServerConfig>> {
         .with_single_cert(certs, key)
         .context("build server config")?;
     Ok(Arc::new(config))
+}
+
+/// OpenSSL acceptor matching Node `deviceTlsOptions` (PR #131 / `util/device_tls.ts`):
+/// - min TLS 1.0
+/// - `DEFAULT:@SECLEVEL=0` so ECDHE-RSA-AES128-SHA / AES128-SHA256 etc. work
+/// - honor server cipher order (modern suites preferred when the client offers them)
+///
+/// Use for **all** listeners that speak to appliance Wi‑Fi modules (ThinQ2 HTTPS
+/// `/route`, MQTTS, ThinQ1 TLS). Without this, RTK_RTL8711am ClientHellos fail
+/// with handshake_failure before any HTTP is logged.
+pub fn device_ssl_acceptor(ca: &Ca) -> Result<Arc<openssl::ssl::SslAcceptor>> {
+    use openssl::ssl::{SslAcceptor, SslFiletype, SslMethod, SslOptions, SslVerifyMode, SslVersion};
+
+    let mut builder =
+        SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server()).context("SslAcceptor")?;
+
+    // mozilla_intermediate disables TLS1.0/1.1 and old ciphers — reverse that for devices.
+    builder.clear_options(SslOptions::NO_TLSV1 | SslOptions::NO_TLSV1_1);
+    builder
+        .set_min_proto_version(Some(SslVersion::TLS1))
+        .context("set min TLS1")?;
+    // Allow SHA1-CBC suites rejected at OpenSSL 3 default security level.
+    builder.set_security_level(0);
+    builder
+        .set_cipher_list("DEFAULT:@SECLEVEL=0")
+        .context("set_cipher_list DEFAULT:@SECLEVEL=0")?;
+    // Prefer modern suites when both sides support them (Node honorCipherOrder).
+    builder.set_options(SslOptions::CIPHER_SERVER_PREFERENCE);
+
+    builder
+        .set_private_key_file(&ca.key_path, SslFiletype::PEM)
+        .context("set private key")?;
+    builder
+        .set_certificate_chain_file(&ca.cert_path)
+        .context("set certificate")?;
+    builder.check_private_key().context("check private key")?;
+    builder.set_verify(SslVerifyMode::NONE);
+
+    Ok(Arc::new(builder.build()))
+}
+
+/// Accept a TCP stream with the device legacy SSL profile.
+pub async fn accept_device_tls(
+    acceptor: &openssl::ssl::SslAcceptor,
+    stream: tokio::net::TcpStream,
+) -> Result<tokio_openssl::SslStream<tokio::net::TcpStream>> {
+    use openssl::ssl::Ssl;
+    use std::pin::Pin;
+
+    let ssl = Ssl::new(acceptor.context()).context("Ssl::new")?;
+    let mut tls = tokio_openssl::SslStream::new(ssl, stream).context("SslStream::new")?;
+    Pin::new(&mut tls).accept().await.context("TLS accept")?;
+    Ok(tls)
 }
 
 /// Sign a device CSR with the CA (openssl x509 -req, matching TypeScript).
