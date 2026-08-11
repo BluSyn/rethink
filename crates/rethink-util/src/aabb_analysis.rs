@@ -37,6 +37,7 @@ fn dryer_phase_name(phase: u8) -> &'static str {
     match phase {
         0x00 => "Off",
         0x01 => "Initial",
+        0x02 => "Drying", // RH10 heat-pump live capture
         0x03 => "Pause",
         0x04 => "End",
         0x32 => "Drying",
@@ -72,25 +73,36 @@ fn dryer_record_fields(rec: &[u8], base: usize, label: &str) -> Vec<AabbField> {
         return Vec::new();
     }
     let phase = rec[2];
-    let remaining_min = rec[0] as u32 * 60 + rec[1] as u32;
+    let programmed_min = rec[0] as u32 * 60 + rec[1] as u32;
+    let live_rem = rec[4] as u32;
+    let remaining_min = if live_rem > 0 {
+        live_rem
+    } else {
+        programmed_min
+    };
+    let course = rec[6] as u32;
+    let dry_level = rec[7] as u32;
+    let temp = rec[10] as u32;
     let flags = rec[17] as u32;
-    let b21 = rec[21] as u32;
+    let tick = rec[20] as u32;
     let phase_name = dryer_phase_name(phase);
     let prefix = if label == "status" {
         String::new()
     } else {
         format!("{label} ")
     };
-    let rem_note = if phase == 0 && remaining_min > 0 {
-        format!("{remaining_min} min (non-zero while Off — residual/display)")
+    let rem_note = if live_rem > 0 {
+        format!("{remaining_min} min (live rec[4]; programmed H:M={programmed_min})")
+    } else if phase == 0 && programmed_min > 0 {
+        format!("{programmed_min} min (H:M; non-zero while Off — residual/display)")
     } else {
-        format!("{remaining_min} min")
+        format!("{remaining_min} min (H:M)")
     };
     vec![
         AabbField {
             name: "remaining_min",
-            offset: base,
-            width: 2,
+            offset: base + if live_rem > 0 { 4 } else { 0 },
+            width: if live_rem > 0 { 1 } else { 2 },
             raw: remaining_min,
             interpretation: format!("{prefix}{rem_note}"),
             confidence: "high",
@@ -104,20 +116,44 @@ fn dryer_record_fields(rec: &[u8], base: usize, label: &str) -> Vec<AabbField> {
             confidence: "high",
         },
         AabbField {
+            name: "course",
+            offset: base + 6,
+            width: 1,
+            raw: course,
+            interpretation: format!("{prefix}0x{course:02x}"),
+            confidence: "medium",
+        },
+        AabbField {
+            name: "dry_level",
+            offset: base + 7,
+            width: 1,
+            raw: dry_level,
+            interpretation: format!("{prefix}{dry_level}"),
+            confidence: "medium",
+        },
+        AabbField {
+            name: "temp_code",
+            offset: base + 10,
+            width: 1,
+            raw: temp,
+            interpretation: format!("{prefix}{temp}"),
+            confidence: "medium",
+        },
+        AabbField {
             name: "flags",
             offset: base + 17,
             width: 1,
             raw: flags,
-            interpretation: format!("{prefix}{flags}"),
+            interpretation: format!("{prefix}0x{flags:02x}"),
             confidence: "medium",
         },
         AabbField {
-            name: "b21",
-            offset: base + 21,
+            name: "tick_6s",
+            offset: base + 20,
             width: 1,
-            raw: b21,
-            interpretation: format!("{prefix}{b21}"),
-            confidence: "low",
+            raw: tick,
+            interpretation: format!("{prefix}{tick} (~6s ticks)"),
+            confidence: "high",
         },
     ]
 }
