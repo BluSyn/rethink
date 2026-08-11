@@ -37,8 +37,11 @@ pub struct AvailabilityInfo {
 
 /// MQTT Device Trigger definition (HA device_automation discovery).
 ///
-/// Published to `{discovery_prefix}/device_automation/{device_id}/{object_id}/config`
-/// and fired on `{rethink_prefix}/{device_id}/{topic_suffix}`.
+/// Nested under modern device discovery as `components.trigger_{object_id}`
+/// on `{discovery_prefix}/device/rethink/{device_id}/config`. Fired on
+/// `{rethink_prefix}/{device_id}/{topic_suffix}`. Classic
+/// `device_automation/.../config` topics are empty-retained so old dual-path
+/// discoveries do not conflict.
 #[derive(Debug, Clone)]
 pub struct DeviceTriggerDef {
     /// Discovery object_id path segment (e.g. `bucket_full`).
@@ -475,44 +478,28 @@ mod ha_mqtt_sink_tests {
         sink.publish_config("dev-xyz", &config);
 
         let logged = pubs.lock().unwrap().clone();
-        let device_topic = "homeassistant/device/rethink/dev-xyz/config";
-        let device_pubs: Vec<_> = logged
-            .iter()
-            .filter(|(t, _, _)| t == device_topic)
-            .collect();
-        // Two-step nested cleanup: platform-only stub, then omit.
+        // Nested under modern device discovery (same document as entities).
         assert!(
-            device_pubs.len() >= 2,
-            "expected stub + final device discovery, got: {logged:?}"
+            logged.iter().any(|(t, body, retain)| {
+                t == "homeassistant/device/rethink/dev-xyz/config"
+                    && *retain
+                    && body.contains("\"identifiers\":[\"dev-xyz\"]")
+                    && body.contains("trigger_bucket_full")
+                    && body.contains("\"platform\":\"device_automation\"")
+                    && body.contains("\"automation_type\":\"trigger\"")
+                    && body.contains("rethink/dev-xyz/triggers/bucket_full")
+            }),
+            "nested device_automation trigger missing from device discovery: {logged:?}"
         );
-        assert!(
-            device_pubs[0].2
-                && device_pubs[0].1.contains("trigger_bucket_full")
-                && device_pubs[0].1.contains("\"platform\":\"device_automation\""),
-            "first device discovery must be platform-only stub for residual nested triggers: {logged:?}"
-        );
-        let final_dev = device_pubs.last().unwrap();
-        assert!(
-            final_dev.2
-                && final_dev.1.contains("\"identifiers\":[\"dev-xyz\"]")
-                && !final_dev.1.contains("trigger_bucket_full")
-                && !final_dev.1.contains("\"platform\":\"device_automation\""),
-            "final device discovery must omit nested triggers: {logged:?}"
-        );
-        // Classic discovery topic only (HA unique on device+type+subtype).
+        // Classic topics must be cleared (empty retain) so HA does not keep a
+        // second discovery id for the same type+subtype.
         assert!(
             logged.iter().any(|(t, body, retain)| {
                 t == "homeassistant/device_automation/dev-xyz/bucket_full/config"
                     && *retain
-                    && body.contains("\"automation_type\":\"trigger\"")
-                    && body.contains("\"subtype\":\"bucket_full\"")
-                    && body.contains("rethink/dev-xyz/triggers/bucket_full")
-                    && body.contains("\"identifiers\":[\"dev-xyz\"]")
-                    && body.contains("\"origin\"")
-                    && body.contains("\"name\":\"rethink\"")
-                    && body.contains("example.invalid/rethink")
+                    && body.is_empty()
             }),
-            "retained classic device trigger discovery missing origin: {logged:?}"
+            "classic trigger topic must be empty-retained to clear old discovery: {logged:?}"
         );
 
         pubs.lock().unwrap().clear();
@@ -547,83 +534,55 @@ impl HaConnection for HaMqttSink {
         );
         normalize_device_identifiers(&mut payload);
 
-        // HA keys MQTT device triggers uniquely by (device, type, subtype).
-        // Do NOT also nest device_automation under modern device discovery —
-        // dual publish yields "conflicts with existing device trigger" and the
-        // second path never sets up. Entities stay on the device discovery doc;
-        // triggers use classic discovery only (device_trigger.mqtt docs).
+        // Nested device triggers on the modern device discovery document (same
+        // path entities use). HA unique-keys triggers by (device, type, subtype),
+        // so classic `device_automation/.../config` must NOT also publish the
+        // same type+subtype — that produced "conflicts with existing device
+        // trigger" and left half-setup state.
         //
-        // If a previous build nested `trigger_*` components, strip them so the
-        // retained device config no longer re-registers them on HA restart.
+        // Older builds retained classic topics; clear them with empty retain so
+        // MQTT reload unloads those discovery ids and only nested remains.
         if let Some(comps) = payload
             .as_object_mut()
             .and_then(|o| o.get_mut("components"))
             .and_then(|c| c.as_object_mut())
         {
-            comps.retain(|k, _| !k.starts_with("trigger_"));
-        }
-
-        // HA requires a platform-only stub then omit to remove an already-active
-        // nested component while HA is running (not just on restart). Known
-        // residual keys are `trigger_{object_id}` from older dual-publish builds.
-        if !config.device_triggers.is_empty() {
-            let mut stub_payload = payload.clone();
-            if let Some(comps) = stub_payload
-                .as_object_mut()
-                .and_then(|o| o.get_mut("components"))
-                .and_then(|c| c.as_object_mut())
-            {
-                for trig in &config.device_triggers {
-                    comps.insert(
-                        format!("trigger_{}", trig.object_id),
-                        json!({ "platform": "device_automation" }),
-                    );
-                }
+            for trig in &config.device_triggers {
+                let event_topic = format!(
+                    "{}/{}/{}",
+                    self.config.rethink_prefix, id, trig.topic_suffix
+                );
+                // Prefix avoids colliding with entity keys (e.g. binary_sensor
+                // "bucket_full" vs trigger "bucket_full").
+                comps.insert(
+                    format!("trigger_{}", trig.object_id),
+                    json!({
+                        "platform": "device_automation",
+                        "automation_type": "trigger",
+                        "type": trig.type_,
+                        "subtype": trig.subtype,
+                        "payload": trig.payload,
+                        "topic": event_topic,
+                    }),
+                );
             }
-            let stub_body = serde_json::to_vec(&stub_payload).unwrap_or_default();
-            self.do_publish(&discovery_topic, &stub_body, true);
         }
 
         let body = serde_json::to_vec(&payload).unwrap_or_default();
-        // Retain so HA recovers entities after broker/HA restart without waiting
-        // for the next birth + republish.
+        // Retain so HA recovers after broker/HA restart without waiting for birth.
         self.do_publish(&discovery_topic, &body, true);
 
-        // Classic per-trigger discovery only.
-        let mut device_info = recursive_replace(
-            &serde_json::to_value(&config.device).unwrap_or(json!({})),
-            &replacements,
-        );
-        normalize_device_identifiers_obj(&mut device_info);
-        let origin = recursive_replace(
-            &serde_json::to_value(&config.origin).unwrap_or(json!({ "name": "rethink" })),
-            &replacements,
-        );
         for trig in &config.device_triggers {
-            let event_topic = format!(
-                "{}/{}/{}",
-                self.config.rethink_prefix, id, trig.topic_suffix
-            );
-            let disc_topic = format!(
+            let classic_topic = format!(
                 "{}/device_automation/{}/{}/config",
                 self.config.discovery_prefix, id, trig.object_id
             );
-            let disc = json!({
-                "automation_type": "trigger",
-                "type": trig.type_,
-                "subtype": trig.subtype,
-                "payload": trig.payload,
-                "topic": event_topic,
-                "device": device_info,
-                "origin": origin,
-            });
-            let body = serde_json::to_vec(&disc).unwrap_or_default();
-            self.do_publish(&disc_topic, &body, true);
+            // Empty retained payload removes prior classic discovery from broker + HA.
+            self.do_publish(&classic_topic, b"", true);
             tracing::debug!(
                 target: "rethink_ha",
-                %disc_topic,
-                event_topic,
-                "published MQTT device trigger discovery"
+                %classic_topic,
+                "cleared classic device trigger discovery (nested only)"
             );
         }
     }
