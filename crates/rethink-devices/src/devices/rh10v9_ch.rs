@@ -32,6 +32,8 @@ pub struct Device {
     core: Arc<AabbDeviceCore>,
     stop: Arc<AtomicBool>,
     monitor_thread: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Last status phase (for cycle-complete edge).
+    last_phase: Mutex<Option<u8>>,
 }
 
 impl Device {
@@ -41,6 +43,7 @@ impl Device {
             core: core.clone(),
             stop: Arc::new(AtomicBool::new(false)),
             monitor_thread: Mutex::new(None),
+            last_phase: Mutex::new(None),
         });
 
         let mut base = default_config(&meta, Some(json!({"name": "LG Dryer"})));
@@ -101,6 +104,13 @@ impl Device {
             }),
         );
         base.components = components.into_iter().collect();
+        base.device_triggers
+            .push(rethink_core::DeviceTriggerDef::custom(
+                "cycle_complete",
+                "turned_off",
+                "cycle_complete",
+                "cycle_complete",
+            ));
         core.set_config(base);
 
         let t = this.clone();
@@ -130,6 +140,9 @@ impl Device {
             .map(|s| (*s).to_string())
             .unwrap_or_else(|| format!("0x{phase:x}"));
 
+        let prev_phase = *self.last_phase.lock();
+        *self.last_phase.lock() = Some(phase);
+
         self.core.publish_property("status", status.into());
         self.core
             .publish_property("remaining_time", remaining.into());
@@ -137,6 +150,15 @@ impl Device {
             .publish_property("power", if phase != 0 { "ON" } else { "OFF" }.into());
         self.core.publish_property("flags", flags.into());
         self.core.publish_property("raw_b21", b21.into());
+
+        // Phase 0x04 = End — fire once when cycle completes
+        if phase == 0x04 && prev_phase != Some(0x04) {
+            self.core.ha.publish_event(
+                &self.core.id,
+                "triggers/cycle_complete",
+                "cycle_complete",
+            );
+        }
     }
 
     fn process_aabb(&self, buf: &[u8]) {

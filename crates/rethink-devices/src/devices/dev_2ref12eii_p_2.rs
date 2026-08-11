@@ -134,6 +134,18 @@ impl Device {
         ]
         .into_iter()
         .collect();
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
+            "door_open",
+            "opened",
+            "door",
+            "door_open",
+        ));
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
+            "door_closed",
+            "closed",
+            "door",
+            "door_closed",
+        ));
         core.set_config(config);
 
         let t = this.clone();
@@ -167,10 +179,7 @@ impl Device {
         );
         self.core
             .publish_property("pure_option", pure_raw_to_name(pure).into());
-        self.core.publish_property(
-            "door",
-            if door == 0x01 { "ON" } else { "OFF" }.into(),
-        );
+        self.core.publish_door_with_trigger(door == 0x01);
         self.core.publish_property(
             "pure_n_fresh_replace",
             if pure == 0x04 { "replace" } else { "OK" }.into(),
@@ -193,8 +202,7 @@ impl Device {
         // 0x10A8 door update
         if buf.len() == 4 && buf[0] == 0x10 && buf[1] == 0xa8 {
             let open = buf[3] == 0x01;
-            self.core
-                .publish_property("door", if open { "ON" } else { "OFF" }.into());
+            self.core.publish_door_with_trigger(open);
         }
     }
 

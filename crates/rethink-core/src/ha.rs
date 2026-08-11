@@ -34,6 +34,48 @@ pub struct AvailabilityInfo {
     pub topic: String,
 }
 
+/// MQTT Device Trigger definition (HA device_automation discovery).
+///
+/// Published to `{discovery_prefix}/device_automation/{device_id}/{object_id}/config`
+/// and fired on `{rethink_prefix}/{device_id}/{topic_suffix}`.
+#[derive(Debug, Clone)]
+pub struct DeviceTriggerDef {
+    /// Discovery object_id path segment (e.g. `bucket_full`).
+    pub object_id: String,
+    /// HA trigger type (e.g. `problem`, `turned_on`, `button_short_press`).
+    pub type_: String,
+    /// HA trigger subtype (e.g. `bucket_full`) — unique with type per device.
+    pub subtype: String,
+    /// Payload HA matches on the event topic.
+    pub payload: String,
+    /// Event topic under the device (`triggers/bucket_full` → `rethink/{id}/triggers/bucket_full`).
+    pub topic_suffix: String,
+}
+
+impl DeviceTriggerDef {
+    /// Problem-class notification trigger (bucket full, filter, etc.).
+    pub fn problem(object_id: &str, subtype: &str, payload: &str) -> Self {
+        Self {
+            object_id: object_id.into(),
+            type_: "problem".into(),
+            subtype: subtype.into(),
+            payload: payload.into(),
+            topic_suffix: format!("triggers/{object_id}"),
+        }
+    }
+
+    /// Generic named trigger (cycle complete, door open, …).
+    pub fn custom(object_id: &str, type_: &str, subtype: &str, payload: &str) -> Self {
+        Self {
+            object_id: object_id.into(),
+            type_: type_.into(),
+            subtype: subtype.into(),
+            payload: payload.into(),
+            topic_suffix: format!("triggers/{object_id}"),
+        }
+    }
+}
+
 /// Device discovery document (HA MQTT discovery).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceDiscovery {
@@ -44,12 +86,17 @@ pub struct DeviceDiscovery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub availability_mode: Option<String>,
     pub components: HashMap<String, Value>,
+    /// Extra MQTT device triggers (not part of HA device discovery JSON).
+    #[serde(skip)]
+    pub device_triggers: Vec<DeviceTriggerDef>,
 }
 
 /// Trait for publishing to HA MQTT (real connection or mock).
 pub trait HaConnection: Send + Sync {
     fn publish_config(&self, id: &str, config: &DeviceDiscovery);
     fn publish_property(&self, id: &str, property: &str, value: PropertyValue);
+    /// Fire a one-shot event (e.g. device trigger payload). Not retained.
+    fn publish_event(&self, id: &str, topic_suffix: &str, payload: &str);
     fn is_connected(&self) -> bool;
 }
 
@@ -138,6 +185,10 @@ pub struct MockDeviceInfo {
     pub config: Option<DeviceDiscovery>,
     pub availability: Option<String>,
     pub properties: HashMap<String, PropertyValue>,
+    /// (topic_suffix, payload) non-retained events
+    pub events: Vec<(String, String)>,
+    /// Published device-trigger discovery object_ids
+    pub device_triggers: Vec<String>,
 }
 
 impl MockHaConnection {
@@ -200,6 +251,11 @@ impl HaConnection for MockHaConnection {
         let mut inner = self.inner.lock();
         let entry = inner.devices.entry(id.to_string()).or_default();
         entry.config = Some(config.clone());
+        entry.device_triggers = config
+            .device_triggers
+            .iter()
+            .map(|t| t.object_id.clone())
+            .collect();
     }
 
     fn publish_property(&self, id: &str, property: &str, value: PropertyValue) {
@@ -210,6 +266,14 @@ impl HaConnection for MockHaConnection {
         } else {
             entry.properties.insert(property.to_string(), value);
         }
+    }
+
+    fn publish_event(&self, id: &str, topic_suffix: &str, payload: &str) {
+        let mut inner = self.inner.lock();
+        let entry = inner.devices.entry(id.to_string()).or_default();
+        entry
+            .events
+            .push((topic_suffix.to_string(), payload.to_string()));
     }
 
     fn is_connected(&self) -> bool {
@@ -343,6 +407,72 @@ mod ha_mqtt_sink_tests {
         sink.publish_property("dev1", "power", "ON".into());
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
+
+    #[test]
+    fn device_trigger_discovery_and_event_are_published() {
+        use crate::ha::{DeviceDiscovery, DeviceInfo, DeviceTriggerDef, HaConnection, OriginInfo};
+        use std::sync::Mutex as StdMutex;
+
+        let sink = HaMqttSink::new(test_cfg());
+        let pubs: Arc<StdMutex<Vec<(String, String, bool)>>> = Arc::new(StdMutex::new(Vec::new()));
+        let p = pubs.clone();
+        sink.set_publish_fn(move |topic, payload, retain| {
+            p.lock().unwrap().push((
+                topic.to_string(),
+                String::from_utf8_lossy(payload).into_owned(),
+                retain,
+            ));
+        });
+
+        let mut config = DeviceDiscovery {
+            device: DeviceInfo {
+                identifiers: json!("$deviceid"),
+                manufacturer: Some("LG".into()),
+                model: Some("DHUM".into()),
+                sw_version: None,
+                name: Some("Dehumidifier".into()),
+            },
+            origin: OriginInfo {
+                name: "rethink".into(),
+                support_url: None,
+                sw_version: None,
+            },
+            availability: None,
+            availability_mode: None,
+            components: Default::default(),
+            device_triggers: vec![DeviceTriggerDef::problem(
+                "bucket_full",
+                "bucket_full",
+                "bucket_full",
+            )],
+        };
+        let _ = &mut config; // silence
+        sink.publish_config("dev-xyz", &config);
+
+        let logged = pubs.lock().unwrap().clone();
+        assert!(
+            logged.iter().any(|(t, body, retain)| {
+                t == "homeassistant/device_automation/dev-xyz/bucket_full/config"
+                    && *retain
+                    && body.contains("\"automation_type\":\"trigger\"")
+                    && body.contains("\"subtype\":\"bucket_full\"")
+                    && body.contains("rethink/dev-xyz/triggers/bucket_full")
+            }),
+            "retained device trigger discovery missing: {logged:?}"
+        );
+
+        pubs.lock().unwrap().clear();
+        sink.publish_event("dev-xyz", "triggers/bucket_full", "bucket_full");
+        let logged = pubs.lock().unwrap().clone();
+        assert!(
+            logged.iter().any(|(t, body, retain)| {
+                t == "rethink/dev-xyz/triggers/bucket_full"
+                    && body == "bucket_full"
+                    && !*retain
+            }),
+            "non-retained trigger event missing: {logged:?}"
+        );
+    }
 }
 
 impl HaConnection for HaMqttSink {
@@ -352,16 +482,43 @@ impl HaConnection for HaMqttSink {
             self.config.discovery_prefix, id
         );
         let device_topic = format!("{}/{}", self.config.rethink_prefix, id);
+        let replacements = [
+            ("$this", device_topic.as_str()),
+            ("$rethink", self.config.rethink_prefix.as_str()),
+            ("$deviceid", id),
+        ];
         let payload = recursive_replace(
             &serde_json::to_value(config).unwrap_or(json!({})),
-            &[
-                ("$this", device_topic.as_str()),
-                ("$rethink", self.config.rethink_prefix.as_str()),
-                ("$deviceid", id),
-            ],
+            &replacements,
         );
         let body = serde_json::to_vec(&payload).unwrap_or_default();
         self.do_publish(&discovery_topic, &body, false);
+
+        // Device triggers — separate discovery docs, retained for HA restarts
+        let device_info = recursive_replace(
+            &serde_json::to_value(&config.device).unwrap_or(json!({})),
+            &replacements,
+        );
+        for trig in &config.device_triggers {
+            let event_topic = format!(
+                "{}/{}/{}",
+                self.config.rethink_prefix, id, trig.topic_suffix
+            );
+            let disc_topic = format!(
+                "{}/device_automation/{}/{}/config",
+                self.config.discovery_prefix, id, trig.object_id
+            );
+            let disc = json!({
+                "automation_type": "trigger",
+                "type": trig.type_,
+                "subtype": trig.subtype,
+                "payload": trig.payload,
+                "topic": event_topic,
+                "device": device_info,
+            });
+            let body = serde_json::to_vec(&disc).unwrap_or_default();
+            self.do_publish(&disc_topic, &body, true);
+        }
     }
 
     fn publish_property(&self, id: &str, property: &str, value: PropertyValue) {
@@ -371,6 +528,11 @@ impl HaConnection for HaMqttSink {
         let topic = format!("{}/{}/{}", self.config.rethink_prefix, id, property);
         let payload = value.as_string();
         self.do_publish(&topic, payload.as_bytes(), true);
+    }
+
+    fn publish_event(&self, id: &str, topic_suffix: &str, payload: &str) {
+        let topic = format!("{}/{}/{}", self.config.rethink_prefix, id, topic_suffix);
+        self.do_publish(&topic, payload.as_bytes(), false);
     }
 
     fn is_connected(&self) -> bool {

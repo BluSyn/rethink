@@ -189,6 +189,17 @@ impl Device {
                 "state_topic": "$this/bucket_full-",
             }),
         );
+        // HA Device Triggers (device page → Create Automation)
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
+            "bucket_full",
+            "bucket_full",
+            "bucket_full",
+        ));
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
+            "bucket_ok",
+            "bucket_ok",
+            "bucket_ok",
+        ));
 
         this.add_fields(&mut config);
 
@@ -499,6 +510,18 @@ impl Device {
             "bucket_full-",
             if full { "ON".into() } else { "OFF".into() },
         );
+        // Device trigger event (non-retained) for HA automations
+        if full {
+            self.core.ha.publish_event(
+                &self.core.id,
+                "triggers/bucket_full",
+                "bucket_full",
+            );
+        } else {
+            self.core
+                .ha
+                .publish_event(&self.core.id, "triggers/bucket_ok", "bucket_ok");
+        }
     }
 
     fn intercept_key_value(&self, k: u16, v: u32) -> bool {
@@ -699,6 +722,15 @@ mod tests {
         assert!(c.contains_key("bucket_light"));
         assert_eq!(c["bucket_full"]["device_class"], "problem");
         assert_eq!(c["bucket_full"]["state_topic"], "$this/bucket_full-");
+        let triggers = &device.config.as_ref().unwrap().device_triggers;
+        assert!(
+            triggers.iter().any(|t| t.object_id == "bucket_full"),
+            "bucket_full device trigger registered"
+        );
+        assert!(
+            triggers.iter().any(|t| t.object_id == "bucket_ok"),
+            "bucket_ok device trigger registered"
+        );
         assert_eq!(c["current_humidity"]["platform"], "sensor");
         assert_eq!(c["current_humidity"]["device_class"], "humidity");
         assert!(hum.get("target_humidity_state_topic").is_some());
@@ -760,6 +792,15 @@ mod tests {
         let (ha, thinq, dev) = build_ready();
         dev.process_key_value(0x2b2, 1);
         assert_eq!(prop(&ha, "bucket_full-"), Some("ON".into()));
+        {
+            let events = &ha.device(DEVICE_ID).unwrap().events;
+            assert!(
+                events
+                    .iter()
+                    .any(|(t, p)| t == "triggers/bucket_full" && p == "bucket_full"),
+                "device trigger event on full: {events:?}"
+            );
+        }
         dev.process_key_value(0x336, 50);
         assert_eq!(prop(&ha, "bucket_full-"), Some("ON".into()));
         assert_eq!(
@@ -768,6 +809,15 @@ mod tests {
         );
         thinq.emit_data(&hex_decode(BUCKET_EMPTIED_NOTIFY_HEX));
         assert_eq!(prop(&ha, "bucket_full-"), Some("OFF".into()));
+        {
+            let events = &ha.device(DEVICE_ID).unwrap().events;
+            assert!(
+                events
+                    .iter()
+                    .any(|(t, p)| t == "triggers/bucket_ok" && p == "bucket_ok"),
+                "device trigger event on emptied: {events:?}"
+            );
+        }
         thinq.emit_data(&hex_decode(BUCKET_FULL_NOTIFY_HEX));
         assert_eq!(prop(&ha, "bucket_full-"), Some("ON".into()));
     }

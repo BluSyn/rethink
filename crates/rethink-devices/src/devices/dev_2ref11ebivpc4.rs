@@ -76,6 +76,18 @@ impl Device {
         ]
         .into_iter()
         .collect();
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
+            "door_open",
+            "opened",
+            "door",
+            "door_open",
+        ));
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
+            "door_closed",
+            "closed",
+            "door",
+            "door_closed",
+        ));
         core.set_config(config);
 
         let t = this.clone();
@@ -98,10 +110,7 @@ impl Device {
         let express_freeze_on = cur[3] == 2;
         let shabbat_on = cur[14] == 1;
 
-        self.core.publish_property(
-            "door",
-            if any_door_open { "ON" } else { "OFF" }.into(),
-        );
+        self.core.publish_door_with_trigger(any_door_open);
         // Prefer integer when whole number
         self.core.publish_property(
             "fridge_setpoint",

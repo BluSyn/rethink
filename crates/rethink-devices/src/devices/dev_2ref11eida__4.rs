@@ -96,6 +96,18 @@ impl Device {
         ]
         .into_iter()
         .collect();
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
+            "door_open",
+            "opened",
+            "door",
+            "door_open",
+        ));
+        config.device_triggers.push(rethink_core::DeviceTriggerDef::custom(
+            "door_closed",
+            "closed",
+            "door",
+            "door_closed",
+        ));
         self.core.set_config(config);
     }
 
@@ -113,10 +125,7 @@ impl Device {
         let setpoint_freezer = convert_freezer_temperature(unit, cur[2] as i32);
         let any_door_open = cur[7];
         let setpoint_flex = cur[13] as usize;
-        self.core.publish_property(
-            "door",
-            if any_door_open == 1 { "ON" } else { "OFF" }.into(),
-        );
+        self.core.publish_door_with_trigger(any_door_open == 1);
         self.core
             .publish_property("fridge_setpoint", PropertyValue::Int(setpoint_fridge as i64));
         self.core
