@@ -116,11 +116,9 @@ impl AabbDeviceCore {
         }
         self.publish_property("door", val.into());
         if open {
-            self.ha
-                .publish_event(&self.id, "triggers/door_open", "door_open");
+            self.ha.fire_device_trigger(&self.id, "door_open");
         } else if prev.as_deref() == Some("ON") {
-            self.ha
-                .publish_event(&self.id, "triggers/door_closed", "door_closed");
+            self.ha.fire_device_trigger(&self.id, "door_closed");
         }
     }
 

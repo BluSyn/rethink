@@ -211,11 +211,9 @@ impl Device {
             .ha
             .publish_property(&self.core.id, "filterchangeddate", changed_date.into());
         if fire_filter {
-            self.core.ha.publish_event(
-                &self.core.id,
-                "triggers/filter_needs_change",
-                "filter_needs_change",
-            );
+            self.core
+                .ha
+                .fire_device_trigger(&self.core.id, "filter_needs_change");
         }
     }
 
@@ -841,8 +839,6 @@ impl Device {
 
         // Device triggers for HA automations (device page)
         config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
-            "filter_needs_change",
-            "filter_needs_change",
             "filter_needs_change",
         ));
 

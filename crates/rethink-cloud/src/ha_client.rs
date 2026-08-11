@@ -2,9 +2,10 @@
 
 use anyhow::{Context, Result};
 use rethink_core::ha::HaMqttSink;
-use rumqttc::{AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS};
+use rumqttc::{AsyncClient, Event, Incoming, LastWill, MqttOptions, QoS, Transport};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use url::Url;
 
 pub async fn start_ha_client(sink: Arc<HaMqttSink>) -> Result<()> {
@@ -23,20 +24,43 @@ pub async fn start_ha_client(sink: Arc<HaMqttSink>) -> Result<()> {
     );
     opts.set_last_will(will);
     if use_tls {
-        // rumqttc 0.24 uses Transport — leave default TCP for mqtt://
+        // System CA roots, no client cert — same transport path as thinq2_conn.
+        opts.set_transport(Transport::tls_with_default_config());
     }
 
     let (client, mut eventloop) = AsyncClient::new(opts, 64);
+
+    // Single ordered publisher task: preserves retain order for discovery bursts
+    // and surfaces publish errors instead of fire-and-forget spawns.
+    let (pub_tx, mut pub_rx) = mpsc::unbounded_channel::<(String, Vec<u8>, bool)>();
     let client_pub = client.clone();
+    tokio::spawn(async move {
+        while let Some((topic, payload, retain)) = pub_rx.recv().await {
+            if let Err(e) = client_pub
+                .publish(&topic, QoS::AtLeastOnce, retain, payload)
+                .await
+            {
+                tracing::warn!(
+                    target: "rethink_ha",
+                    %topic,
+                    error = %e,
+                    "HA MQTT publish failed"
+                );
+            }
+        }
+    });
+
     sink.set_publish_fn(move |topic, payload, retain| {
-        let client = client_pub.clone();
-        let topic = topic.to_string();
-        let payload = payload.to_vec();
-        tokio::spawn(async move {
-            let _ = client
-                .publish(topic, QoS::AtLeastOnce, retain, payload)
-                .await;
-        });
+        if pub_tx
+            .send((topic.to_string(), payload.to_vec(), retain))
+            .is_err()
+        {
+            tracing::warn!(
+                target: "rethink_ha",
+                %topic,
+                "HA MQTT publisher channel closed; dropping publish"
+            );
+        }
     });
 
     let prefix = cfg.rethink_prefix.clone();
@@ -101,4 +125,32 @@ fn parse_mqtt_url(url: &str) -> Result<(String, u16, bool)> {
     let use_tls = u.scheme() == "mqtts" || u.scheme() == "ssl";
     let port = u.port().unwrap_or(if use_tls { 8883 } else { 1883 });
     Ok((host, port, use_tls))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_mqtt_plain() {
+        let (host, port, tls) = parse_mqtt_url("mqtt://ha.local:1883").unwrap();
+        assert_eq!(host, "ha.local");
+        assert_eq!(port, 1883);
+        assert!(!tls);
+    }
+
+    #[test]
+    fn parse_mqtts_defaults_port_and_tls() {
+        let (host, port, tls) = parse_mqtt_url("mqtts://broker.example").unwrap();
+        assert_eq!(host, "broker.example");
+        assert_eq!(port, 8883);
+        assert!(tls);
+    }
+
+    #[test]
+    fn parse_ssl_scheme() {
+        let (_, port, tls) = parse_mqtt_url("ssl://10.0.0.1:8884").unwrap();
+        assert_eq!(port, 8884);
+        assert!(tls);
+    }
 }

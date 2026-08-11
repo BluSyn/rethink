@@ -105,10 +105,8 @@ impl Device {
         );
         base.components = components.into_iter().collect();
         base.device_triggers
-            .push(rethink_core::DeviceTriggerDef::custom(
-                "cycle_complete",
+            .push(rethink_core::DeviceTriggerDef::event(
                 "turned_off",
-                "cycle_complete",
                 "cycle_complete",
             ));
         core.set_config(base);
@@ -153,11 +151,9 @@ impl Device {
 
         // Phase 0x04 = End — fire once when cycle completes
         if phase == 0x04 && prev_phase != Some(0x04) {
-            self.core.ha.publish_event(
-                &self.core.id,
-                "triggers/cycle_complete",
-                "cycle_complete",
-            );
+            self.core
+                .ha
+                .fire_device_trigger(&self.core.id, "cycle_complete");
         }
     }
 

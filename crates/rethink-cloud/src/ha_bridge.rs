@@ -113,7 +113,10 @@ impl HaBridge {
     }
 
     pub fn republish_all(&self) {
-        for d in self.ha_devices.lock().values() {
+        // Clone Arcs out of the lock so publish_config (and nested MQTT work)
+        // does not block set_property / new_device.
+        let devices: Vec<_> = self.ha_devices.lock().values().cloned().collect();
+        for d in devices {
             d.publish_config();
         }
     }

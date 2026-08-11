@@ -190,16 +190,12 @@ impl Device {
             }),
         );
         // HA Device Triggers (device page → Create Automation)
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
-            "bucket_full",
-            "bucket_full",
-            "bucket_full",
-        ));
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
-            "bucket_ok",
-            "bucket_ok",
-            "bucket_ok",
-        ));
+        config
+            .device_triggers
+            .push(rethink_core::DeviceTriggerDef::problem("bucket_full"));
+        config
+            .device_triggers
+            .push(rethink_core::DeviceTriggerDef::problem("bucket_ok"));
 
         this.add_fields(&mut config);
 
@@ -512,15 +508,13 @@ impl Device {
         );
         // Device trigger event (non-retained) for HA automations
         if full {
-            self.core.ha.publish_event(
-                &self.core.id,
-                "triggers/bucket_full",
-                "bucket_full",
-            );
+            self.core
+                .ha
+                .fire_device_trigger(&self.core.id, "bucket_full");
         } else {
             self.core
                 .ha
-                .publish_event(&self.core.id, "triggers/bucket_ok", "bucket_ok");
+                .fire_device_trigger(&self.core.id, "bucket_ok");
         }
     }
 

@@ -173,16 +173,12 @@ impl Device {
                 "state_topic": "$this/bucket_full-",
             }),
         );
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
-            "bucket_full",
-            "bucket_full",
-            "bucket_full",
-        ));
-        config.device_triggers.push(rethink_core::DeviceTriggerDef::problem(
-            "bucket_ok",
-            "bucket_ok",
-            "bucket_ok",
-        ));
+        config
+            .device_triggers
+            .push(rethink_core::DeviceTriggerDef::problem("bucket_full"));
+        config
+            .device_triggers
+            .push(rethink_core::DeviceTriggerDef::problem("bucket_ok"));
 
         this.add_fields(&mut config);
         if let Some(serde_json::Value::Object(hum)) = config.components.get_mut("humidifier") {
@@ -370,15 +366,13 @@ impl Device {
             if full { "ON".into() } else { "OFF".into() },
         );
         if full {
-            self.core.ha.publish_event(
-                &self.core.id,
-                "triggers/bucket_full",
-                "bucket_full",
-            );
+            self.core
+                .ha
+                .fire_device_trigger(&self.core.id, "bucket_full");
         } else {
             self.core
                 .ha
-                .publish_event(&self.core.id, "triggers/bucket_ok", "bucket_ok");
+                .fire_device_trigger(&self.core.id, "bucket_ok");
         }
     }
 

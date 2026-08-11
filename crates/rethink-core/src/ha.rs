@@ -5,6 +5,7 @@ use rethink_util::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,18 +54,31 @@ pub struct DeviceTriggerDef {
 }
 
 impl DeviceTriggerDef {
-    /// Problem-class notification trigger (bucket full, filter, etc.).
-    pub fn problem(object_id: &str, subtype: &str, payload: &str) -> Self {
+    /// Problem-class notification (bucket full, filter, …).
+    /// `object_id` = `subtype` = `payload` = `name`; topic `triggers/{name}`.
+    pub fn problem(name: &str) -> Self {
         Self {
-            object_id: object_id.into(),
+            object_id: name.into(),
             type_: "problem".into(),
-            subtype: subtype.into(),
-            payload: payload.into(),
-            topic_suffix: format!("triggers/{object_id}"),
+            subtype: name.into(),
+            payload: name.into(),
+            topic_suffix: format!("triggers/{name}"),
         }
     }
 
-    /// Generic named trigger (cycle complete, door open, …).
+    /// Named event trigger (cycle complete, etc.).
+    /// `object_id` = `subtype` = `payload` = `name`; topic `triggers/{name}`.
+    pub fn event(type_: &str, name: &str) -> Self {
+        Self {
+            object_id: name.into(),
+            type_: type_.into(),
+            subtype: name.into(),
+            payload: name.into(),
+            topic_suffix: format!("triggers/{name}"),
+        }
+    }
+
+    /// Full control when subtype differs from object_id (e.g. door open/closed).
     pub fn custom(object_id: &str, type_: &str, subtype: &str, payload: &str) -> Self {
         Self {
             object_id: object_id.into(),
@@ -98,6 +112,11 @@ pub trait HaConnection: Send + Sync {
     /// Fire a one-shot event (e.g. device trigger payload). Not retained.
     fn publish_event(&self, id: &str, topic_suffix: &str, payload: &str);
     fn is_connected(&self) -> bool;
+
+    /// Fire a device trigger by `object_id` (topic `triggers/{object_id}`, payload = object_id).
+    fn fire_device_trigger(&self, id: &str, object_id: &str) {
+        self.publish_event(id, &format!("triggers/{object_id}"), object_id);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -314,6 +333,17 @@ impl HaMqttSink {
     fn do_publish(&self, topic: &str, payload: &[u8], retain: bool) {
         if let Some(f) = self.publish_fn.lock().as_ref() {
             f(topic, payload, retain);
+        } else {
+            // Once is enough — startup race if devices connect before HA client installs publish_fn.
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    target: "rethink_ha",
+                    %topic,
+                    retain,
+                    "HA MQTT publish_fn not set; dropping publish (will not warn again)"
+                );
+            }
         }
     }
 
@@ -434,21 +464,41 @@ mod ha_mqtt_sink_tests {
             },
             origin: OriginInfo {
                 name: "rethink".into(),
-                support_url: None,
+                support_url: Some("https://example.invalid/rethink".into()),
                 sw_version: None,
             },
             availability: None,
             availability_mode: None,
             components: Default::default(),
-            device_triggers: vec![DeviceTriggerDef::problem(
-                "bucket_full",
-                "bucket_full",
-                "bucket_full",
-            )],
+            device_triggers: vec![DeviceTriggerDef::problem("bucket_full")],
         };
         sink.publish_config("dev-xyz", &config);
 
         let logged = pubs.lock().unwrap().clone();
+        let device_topic = "homeassistant/device/rethink/dev-xyz/config";
+        let device_pubs: Vec<_> = logged
+            .iter()
+            .filter(|(t, _, _)| t == device_topic)
+            .collect();
+        // Two-step nested cleanup: platform-only stub, then omit.
+        assert!(
+            device_pubs.len() >= 2,
+            "expected stub + final device discovery, got: {logged:?}"
+        );
+        assert!(
+            device_pubs[0].2
+                && device_pubs[0].1.contains("trigger_bucket_full")
+                && device_pubs[0].1.contains("\"platform\":\"device_automation\""),
+            "first device discovery must be platform-only stub for residual nested triggers: {logged:?}"
+        );
+        let final_dev = device_pubs.last().unwrap();
+        assert!(
+            final_dev.2
+                && final_dev.1.contains("\"identifiers\":[\"dev-xyz\"]")
+                && !final_dev.1.contains("trigger_bucket_full")
+                && !final_dev.1.contains("\"platform\":\"device_automation\""),
+            "final device discovery must omit nested triggers: {logged:?}"
+        );
         // Classic discovery topic only (HA unique on device+type+subtype).
         assert!(
             logged.iter().any(|(t, body, retain)| {
@@ -458,23 +508,15 @@ mod ha_mqtt_sink_tests {
                     && body.contains("\"subtype\":\"bucket_full\"")
                     && body.contains("rethink/dev-xyz/triggers/bucket_full")
                     && body.contains("\"identifiers\":[\"dev-xyz\"]")
+                    && body.contains("\"origin\"")
+                    && body.contains("\"name\":\"rethink\"")
+                    && body.contains("example.invalid/rethink")
             }),
-            "retained classic device trigger discovery missing: {logged:?}"
-        );
-        // Device discovery must not nest device_automation (dual-path conflict).
-        assert!(
-            logged.iter().any(|(t, body, retain)| {
-                t == "homeassistant/device/rethink/dev-xyz/config"
-                    && *retain
-                    && body.contains("\"identifiers\":[\"dev-xyz\"]")
-                    && !body.contains("trigger_bucket_full")
-                    && !body.contains("\"platform\":\"device_automation\"")
-            }),
-            "device discovery must omit nested triggers: {logged:?}"
+            "retained classic device trigger discovery missing origin: {logged:?}"
         );
 
         pubs.lock().unwrap().clear();
-        sink.publish_event("dev-xyz", "triggers/bucket_full", "bucket_full");
+        sink.fire_device_trigger("dev-xyz", "bucket_full");
         let logged = pubs.lock().unwrap().clone();
         assert!(
             logged.iter().any(|(t, body, retain)| {
@@ -521,6 +563,27 @@ impl HaConnection for HaMqttSink {
             comps.retain(|k, _| !k.starts_with("trigger_"));
         }
 
+        // HA requires a platform-only stub then omit to remove an already-active
+        // nested component while HA is running (not just on restart). Known
+        // residual keys are `trigger_{object_id}` from older dual-publish builds.
+        if !config.device_triggers.is_empty() {
+            let mut stub_payload = payload.clone();
+            if let Some(comps) = stub_payload
+                .as_object_mut()
+                .and_then(|o| o.get_mut("components"))
+                .and_then(|c| c.as_object_mut())
+            {
+                for trig in &config.device_triggers {
+                    comps.insert(
+                        format!("trigger_{}", trig.object_id),
+                        json!({ "platform": "device_automation" }),
+                    );
+                }
+            }
+            let stub_body = serde_json::to_vec(&stub_payload).unwrap_or_default();
+            self.do_publish(&discovery_topic, &stub_body, true);
+        }
+
         let body = serde_json::to_vec(&payload).unwrap_or_default();
         // Retain so HA recovers entities after broker/HA restart without waiting
         // for the next birth + republish.
@@ -532,6 +595,10 @@ impl HaConnection for HaMqttSink {
             &replacements,
         );
         normalize_device_identifiers_obj(&mut device_info);
+        let origin = recursive_replace(
+            &serde_json::to_value(&config.origin).unwrap_or(json!({ "name": "rethink" })),
+            &replacements,
+        );
         for trig in &config.device_triggers {
             let event_topic = format!(
                 "{}/{}/{}",
@@ -548,6 +615,7 @@ impl HaConnection for HaMqttSink {
                 "payload": trig.payload,
                 "topic": event_topic,
                 "device": device_info,
+                "origin": origin,
             });
             let body = serde_json::to_vec(&disc).unwrap_or_default();
             self.do_publish(&disc_topic, &body, true);
