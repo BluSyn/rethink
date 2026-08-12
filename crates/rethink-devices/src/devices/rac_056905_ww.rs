@@ -860,7 +860,7 @@ impl Device {
             "filter_changed",
             "Filter alert",
             &["filter_needs_change"],
-            Some("problem"),
+            None, // event device_class: only doorbell|button|motion
         );
         config.components.insert(k, v);
 

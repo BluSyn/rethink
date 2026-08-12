@@ -177,7 +177,7 @@ impl Device {
             "bucket_alert",
             "Bucket alert",
             &["bucket_full", "bucket_ok"],
-            Some("problem"),
+            None, // event device_class: only doorbell|button|motion
         );
         config.components.insert(k, v);
 

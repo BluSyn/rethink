@@ -58,6 +58,10 @@ pub fn problem_binary_sensor(object_id: &str, name: &str) -> (String, Value) {
 ///
 /// Prefer this for moment notifications (cycle complete, …). Automate on the
 /// event entity in HA; payload must be JSON `{"event_type":"..."}` (non-retained).
+///
+/// `device_class` must be a HA **Event** class only: `doorbell`, `button`, or
+/// `motion` (or `None`). Do **not** use binary_sensor classes like `problem` —
+/// MQTT discovery rejects them for event entities.
 pub fn notification_event(
     object_id: &str,
     name: &str,
@@ -71,10 +75,13 @@ pub fn notification_event(
         "state_topic": format!("$this/events/{object_id}"),
         "event_types": event_types,
     });
+    // HA EventDeviceClass: doorbell | button | motion only.
     if let Some(dc) = device_class {
-        body.as_object_mut()
-            .unwrap()
-            .insert("device_class".into(), json!(dc));
+        if matches!(dc, "doorbell" | "button" | "motion") {
+            body.as_object_mut()
+                .unwrap()
+                .insert("device_class".into(), json!(dc));
+        }
     }
     (object_id.into(), body)
 }
