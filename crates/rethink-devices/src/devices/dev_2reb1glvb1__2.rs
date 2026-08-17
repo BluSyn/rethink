@@ -208,7 +208,7 @@ impl DeviceHandler for Device {
         &self.core.id
     }
     fn start(&self) {
-        self.core.send(&hex_decode("F0ED1211010000010400"));
+        crate::devices::washer_ctrl::request_fridge_status(&self.core);
     }
     fn drop_device(&self) {
         self.core.drop_device();
@@ -217,12 +217,7 @@ impl DeviceHandler for Device {
         Device::set_property(self, prop, value);
     }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core
-                .ha
-                .publish_property(&self.core.id, "availability", "online".into());
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 

@@ -2,11 +2,10 @@
 
 use crate::device_trait::DeviceHandler;
 use crate::devices::washer_ctrl::{pub_error_status, pub_temp_spin, set_power_start_pause};
-use crate::washer_common::{course_name, drying_mode, error_options, state_options};
+use crate::washer_common::{course_name, drying_mode, fy_base_components, install_components};
 use rethink_core::device_base::{default_config, AabbDeviceCore};
-use rethink_core::hex_decode;
 use rethink_core::{HaConnection, Metadata, Thinq2Device};
-use serde_json::{json, Map};
+use serde_json::json;
 use std::sync::Arc;
 
 pub struct Device {
@@ -19,29 +18,15 @@ impl Device {
         let this = Arc::new(Self { core: core.clone() });
 
         let mut base = default_config(&meta, Some(json!({"name": "LG Washer"})));
-        let mut components = Map::new();
-        let common = [
-            ("power", json!({"platform":"switch","unique_id":"$deviceid-power","state_topic":"$this/power","command_topic":"$this/power/set","name":"","icon":"mdi:washing-machine"})),
-            ("start", json!({"platform":"button","unique_id":"$deviceid-start","command_topic":"$this/start/set","payload_press":"","name":"Start","icon":"mdi:play-circle-outline"})),
-            ("pause", json!({"platform":"button","unique_id":"$deviceid-pause","command_topic":"$this/pause/set","payload_press":"","name":"Pause","icon":"mdi:pause-circle-outline"})),
-            ("status", json!({"platform":"sensor","unique_id":"$deviceid-status","state_topic":"$this/status","name":"Status","icon":"mdi:state-machine","device_class":"enum","options":state_options()})),
-            ("error", json!({"platform":"binary_sensor","unique_id":"$deviceid-error","state_topic":"$this/error","name":"Error","icon":"mdi:check-circle","device_class":"problem","entity_category":"diagnostic"})),
-            ("error_message", json!({"platform":"sensor","unique_id":"$deviceid-error-message","state_topic":"$this/error_message","name":"Error message","icon":"mdi:alert-circle-outline","device_class":"enum","entity_category":"diagnostic","options":error_options()})),
-            ("course", json!({"platform":"sensor","unique_id":"$deviceid-course","state_topic":"$this/course","name":"Course","icon":"mdi:pin-outline"})),
-            ("temp", json!({"platform":"sensor","unique_id":"$deviceid-temp","state_topic":"$this/temp","name":"Temperature","device_class":"temperature","unit_of_measurement":"°C","suggested_display_precision":0,"value_template":"{{ value if value | is_number else 'None' }}"})),
-            ("spin", json!({"platform":"sensor","unique_id":"$deviceid-spin","state_topic":"$this/spin","name":"Spin","icon":"mdi:autorenew","unit_of_measurement":"RPM","value_template":"{{ value if value | is_number else 'None' }}"})),
-            ("drying_mode", json!({"platform":"sensor","unique_id":"$deviceid-drying-mode","state_topic":"$this/drying_mode","name":"Drying mode","icon":"mdi:tumble-dryer"})),
-            ("cycles", json!({"platform":"sensor","unique_id":"$deviceid-cycles","state_topic":"$this/cycles","name":"Cycle count","icon":"mdi:counter"})),
-            ("remote_start", json!({"platform":"binary_sensor","unique_id":"$deviceid-remote_start","state_topic":"$this/remote_start","name":"Remote start","icon":"mdi:play-circle-outline"})),
-            ("door_lock", json!({"platform":"binary_sensor","unique_id":"$deviceid-door_lock","state_topic":"$this/door_lock","name":"Door lock","device_class":"lock"})),
-            ("energy", json!({"platform":"sensor","unique_id":"$deviceid-energy","state_topic":"$this/energy","name":"Energy","icon":"mdi:lightning-bolt","device_class":"energy","state_class":"total_increasing","unit_of_measurement":"Wh"})),
-            ("initial_time", json!({"platform":"sensor","unique_id":"$deviceid-initial_time","state_topic":"$this/initial_time","device_class":"duration","unit_of_measurement":"min","name":"Initial time"})),
-            ("remaining_time", json!({"platform":"sensor","unique_id":"$deviceid-remaining_time","state_topic":"$this/remaining_time","device_class":"duration","unit_of_measurement":"min","name":"Remaining time"})),
-        ];
-        for (k, v) in common {
-            components.insert(k.into(), v);
-        }
-        base.components = components.into_iter().collect();
+        install_components(&mut base, fy_base_components());
+        install_components(
+            &mut base,
+            [
+                ("drying_mode", json!({"platform":"sensor","unique_id":"$deviceid-drying-mode","state_topic":"$this/drying_mode","name":"Drying mode","icon":"mdi:tumble-dryer"})),
+                ("cycles", json!({"platform":"sensor","unique_id":"$deviceid-cycles","state_topic":"$this/cycles","name":"Cycle count","icon":"mdi:counter"})),
+                ("energy", json!({"platform":"sensor","unique_id":"$deviceid-energy","state_topic":"$this/energy","name":"Energy","icon":"mdi:lightning-bolt","device_class":"energy","state_class":"total_increasing","unit_of_measurement":"Wh"})),
+            ],
+        );
         core.set_config(base);
 
         let t = this.clone();
@@ -67,8 +52,7 @@ impl Device {
             let cycles = buf[64] as i64;
             let energy = buf[71] as i64 * 256 + buf[72] as i64;
 
-            self.core
-                .publish_property("power", if status > 0 { "ON" } else { "OFF" }.into());
+            self.core.publish_on_off("power", status > 0);
             pub_error_status(&self.core, error, status);
             self.core.publish_property(
                 "course",
@@ -108,7 +92,7 @@ impl DeviceHandler for Device {
         &self.core.id
     }
     fn start(&self) {
-        self.core.send(&hex_decode("F0ED1121010000001800"));
+        crate::devices::washer_ctrl::request_status(&self.core);
     }
     fn drop_device(&self) {
         self.core.drop_device();
@@ -117,12 +101,7 @@ impl DeviceHandler for Device {
         Device::set_property(self, prop, value);
     }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core
-                .ha
-                .publish_property(&self.core.id, "availability", "online".into());
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 

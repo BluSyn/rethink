@@ -2,7 +2,7 @@
 
 use crate::device_trait::DeviceHandler;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
-use rethink_core::hex_decode;
+
 use rethink_core::{HaConnection, Metadata, Thinq2Device};
 use serde_json::{json, Map};
 use std::sync::Arc;
@@ -718,15 +718,12 @@ impl DeviceHandler for Device {
     fn start(&self) {
         self.core.publish_property("washer/door", DOOR_CLOSE.into());
         self.core.publish_property("dryer/door", DOOR_CLOSE.into());
-        self.core.send(&hex_decode("F0ED1121010000001800"));
+        crate::devices::washer_ctrl::request_status(&self.core);
     }
     fn drop_device(&self) { self.core.drop_device(); }
     fn set_property(&self, prop: &str, value: &str) { Device::set_property(self, prop, value); }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core.ha.publish_property(&self.core.id, "availability", "online".into());
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 

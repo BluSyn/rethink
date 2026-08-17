@@ -176,3 +176,78 @@ pub fn state_options() -> Vec<&'static str> {
 pub fn error_options() -> Vec<&'static str> {
     ERRORS.iter().filter_map(|s| *s).collect()
 }
+
+/// HA discovery shared by F_/Y_ AABB washers (power/start/pause + status/error + course/temp/spin + times).
+/// Callers insert extras (energy, drying_mode, option bits) on top.
+pub fn fy_base_components() -> Vec<(String, serde_json::Value)> {
+    use serde_json::json;
+    vec![
+        ("power".into(), json!({"platform":"switch","unique_id":"$deviceid-power","state_topic":"$this/power","command_topic":"$this/power/set","name":"","icon":"mdi:washing-machine"})),
+        ("start".into(), json!({"platform":"button","unique_id":"$deviceid-start","command_topic":"$this/start/set","payload_press":"","name":"Start","icon":"mdi:play-circle-outline"})),
+        ("pause".into(), json!({"platform":"button","unique_id":"$deviceid-pause","command_topic":"$this/pause/set","payload_press":"","name":"Pause","icon":"mdi:pause-circle-outline"})),
+        ("status".into(), json!({"platform":"sensor","unique_id":"$deviceid-status","state_topic":"$this/status","name":"Status","icon":"mdi:state-machine","device_class":"enum","options":state_options()})),
+        ("error".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-error","state_topic":"$this/error","name":"Error","icon":"mdi:check-circle","device_class":"problem","entity_category":"diagnostic"})),
+        ("error_message".into(), json!({"platform":"sensor","unique_id":"$deviceid-error-message","state_topic":"$this/error_message","name":"Error message","icon":"mdi:alert-circle-outline","device_class":"enum","entity_category":"diagnostic","options":error_options()})),
+        ("course".into(), json!({"platform":"sensor","unique_id":"$deviceid-course","state_topic":"$this/course","name":"Course","icon":"mdi:pin-outline"})),
+        ("temp".into(), json!({"platform":"sensor","unique_id":"$deviceid-temp","state_topic":"$this/temp","name":"Temperature","device_class":"temperature","unit_of_measurement":"°C","suggested_display_precision":0,"value_template":"{{ value if value | is_number else 'None' }}"})),
+        ("spin".into(), json!({"platform":"sensor","unique_id":"$deviceid-spin","state_topic":"$this/spin","name":"Spin","icon":"mdi:autorenew","unit_of_measurement":"RPM","value_template":"{{ value if value | is_number else 'None' }}"})),
+        ("remote_start".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-remote_start","state_topic":"$this/remote_start","name":"Remote start","icon":"mdi:play-circle-outline"})),
+        ("door_lock".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-door_lock","state_topic":"$this/door_lock","name":"Door lock","device_class":"lock"})),
+        ("initial_time".into(), json!({"platform":"sensor","unique_id":"$deviceid-initial_time","state_topic":"$this/initial_time","device_class":"duration","unit_of_measurement":"min","name":"Initial time"})),
+        ("remaining_time".into(), json!({"platform":"sensor","unique_id":"$deviceid-remaining_time","state_topic":"$this/remaining_time","device_class":"duration","unit_of_measurement":"min","name":"Remaining time"})),
+    ]
+}
+
+/// Merge component pairs into a discovery document.
+pub fn install_components(
+    base: &mut rethink_core::DeviceDiscovery,
+    items: impl IntoIterator<Item = (impl Into<String>, serde_json::Value)>,
+) {
+    for (k, v) in items {
+        base.components.insert(k.into(), v);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_and_error_lookups() {
+        assert_eq!(state_name(0), "Off");
+        assert_eq!(state_name(1), "Ready");
+        assert_eq!(state_name(99), "unknown");
+        assert_eq!(error_message(0), "OK");
+        assert_eq!(error_message(1), "Door lock error (DE2)");
+        assert_eq!(error_message(999), "unknown");
+    }
+
+    #[test]
+    fn temp_and_spin_tables() {
+        assert_eq!(temperature_value(4), Some(40));
+        assert_eq!(temperature_value(0), None);
+        assert_eq!(spin_value(10), Some(1400));
+        assert_eq!(course_name(0x1), Some("Cotton"));
+        assert_eq!(course_name(0xffff), None);
+    }
+
+    #[test]
+    fn fy_base_has_control_and_status() {
+        let keys: Vec<_> = fy_base_components().into_iter().map(|(k, _)| k).collect();
+        for k in [
+            "power",
+            "start",
+            "pause",
+            "status",
+            "error",
+            "course",
+            "temp",
+            "spin",
+            "remaining_time",
+        ] {
+            assert!(keys.contains(&k.to_string()), "missing {k}");
+        }
+        assert_eq!(state_options().first().copied(), Some("Off"));
+        assert!(!error_options().is_empty());
+    }
+}

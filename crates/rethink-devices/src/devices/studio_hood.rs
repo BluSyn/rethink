@@ -164,9 +164,7 @@ impl DeviceHandler for Device {
         self.send_combined(fan, light);
     }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 

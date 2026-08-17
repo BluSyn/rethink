@@ -12,6 +12,7 @@ pub use ha::{
     PropertyValue,
 };
 pub use metadata::Metadata;
+pub use device_base::{unwrap_aabb, wrap_aabb};
 pub use thinq::{
     hex_decode, hex_encode, MockThinq1Device, MockThinq2Device, Thinq1Device, Thinq2Device,
 };

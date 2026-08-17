@@ -266,12 +266,7 @@ impl DeviceHandler for Device {
         Device::set_property(self, prop, value);
     }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core
-                .ha
-                .publish_property(&self.core.id, "availability", "online".into());
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 

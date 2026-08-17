@@ -448,7 +448,7 @@ impl DeviceHandler for Device {
     }
     fn start(&self) {
         // Family status request + default target properties (PR #139 start()).
-        self.core.send(&hex_decode("F0ED1121010000001800"));
+        crate::devices::washer_ctrl::request_status(&self.core);
         self.core.publish_property("target_course", "AUTO".into());
         self.core.publish_property("target_delay", 0i64.into());
         self.core.publish_property("target_high_temp", "OFF".into());
@@ -462,12 +462,7 @@ impl DeviceHandler for Device {
         Device::set_property(self, prop, value);
     }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core
-                .ha
-                .publish_property(&self.core.id, "availability", "online".into());
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 

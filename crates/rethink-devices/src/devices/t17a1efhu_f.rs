@@ -135,12 +135,7 @@ impl DeviceHandler for Device {
         Device::set_property(self, prop, value);
     }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core
-                .ha
-                .publish_property(&self.core.id, "availability", "online".into());
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 
@@ -155,25 +150,15 @@ pub fn create(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rethink_core::{hex_decode, MockHaConnection, MockThinq2Device, Metadata, Thinq2Device};
+    use crate::test_support::{make_t2, prop, DEVICE_ID};
+    use rethink_core::{hex_decode, Thinq2Device};
 
-    const DEVICE_ID: &str = "test-id";
-
-    fn meta() -> Metadata {
-        Metadata::new("T17A1EFHU_F", "LG WT7305CV", "1.0")
-    }
     fn make() -> (
-        std::sync::Arc<MockHaConnection>,
-        std::sync::Arc<MockThinq2Device>,
+        std::sync::Arc<rethink_core::MockHaConnection>,
+        std::sync::Arc<rethink_core::MockThinq2Device>,
         std::sync::Arc<Device>,
     ) {
-        let ha = MockHaConnection::new();
-        let thinq = MockThinq2Device::new(DEVICE_ID, meta());
-        let dev = Device::new(ha.clone(), thinq.clone(), meta());
-        (ha, thinq, dev)
-    }
-    fn prop(ha: &MockHaConnection, n: &str) -> Option<String> {
-        ha.device(DEVICE_ID)?.properties.get(n).map(|p| p.as_string())
+        make_t2("T17A1EFHU_F", Device::new)
     }
 
     /// Build 0x20/0xDE status: header + 27-byte record (phase at rec[2], mins at rec[4]).

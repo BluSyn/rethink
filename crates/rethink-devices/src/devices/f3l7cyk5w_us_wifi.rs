@@ -7,7 +7,6 @@
 
 use crate::device_trait::DeviceHandler;
 use rethink_core::device_base::{default_config, AabbDeviceCore};
-use rethink_core::hex_decode;
 use rethink_core::{HaConnection, Metadata, Thinq2Device};
 use serde_json::{json, Map};
 use std::collections::HashMap;
@@ -335,7 +334,7 @@ impl DeviceHandler for Device {
         &self.core.id
     }
     fn start(&self) {
-        self.core.send(&hex_decode("F0ED1121010000001800"));
+        crate::devices::washer_ctrl::request_status(&self.core);
     }
     fn drop_device(&self) {
         self.core.drop_device();
@@ -344,12 +343,7 @@ impl DeviceHandler for Device {
         Device::set_property(self, prop, value);
     }
     fn publish_config(&self) {
-        if let Some(cfg) = self.core.config.lock().clone() {
-            self.core
-                .ha
-                .publish_property(&self.core.id, "availability", "online".into());
-            self.core.ha.publish_config(&self.core.id, &cfg);
-        }
+        self.core.republish_config();
     }
 }
 

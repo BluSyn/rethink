@@ -95,3 +95,47 @@ pub fn pack_status(status: &Status, length: usize) -> Vec<u8> {
 pub fn status_get(s: &Status, key: &str) -> u8 {
     s.get(key).copied().unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fridge_temp_roundtrip_c_and_f() {
+        for unit in [TemperatureUnit::C, TemperatureUnit::F] {
+            let (lo, hi) = {
+                let (_u, lo, hi) = fridge_range(unit);
+                (lo, hi)
+            };
+            for display in lo..=hi {
+                let raw = convert_fridge_temperature(unit, display);
+                assert_eq!(convert_fridge_temperature(unit, raw), display);
+            }
+        }
+    }
+
+    #[test]
+    fn freezer_temp_roundtrip_c_and_f() {
+        for unit in [TemperatureUnit::C, TemperatureUnit::F] {
+            let (_u, lo, hi) = freezer_range(unit);
+            for display in lo..=hi {
+                let raw = convert_freezer_temperature(unit, display);
+                assert_eq!(convert_freezer_temperature(unit, raw), display);
+            }
+        }
+    }
+
+    #[test]
+    fn pack_unpack_preserves_known_fields() {
+        let mut s = Status::new();
+        s.insert("fridgeSetpoint", 3);
+        s.insert("freezerSetpoint", 6);
+        s.insert("anyDoorOpen", 1);
+        let packed = pack_status(&s, 20);
+        let back = unpack_status(&packed);
+        assert_eq!(status_get(&back, "fridgeSetpoint"), 3);
+        assert_eq!(status_get(&back, "freezerSetpoint"), 6);
+        assert_eq!(status_get(&back, "anyDoorOpen"), 1);
+        assert_eq!(status_get(&back, "missing"), 0);
+    }
+}
