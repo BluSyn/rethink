@@ -21,6 +21,7 @@ pub mod dev_2res1ve61nfa2;
 
 // AABB laundry / dryer / dishwasher
 pub mod f3l2cyu__;
+pub mod f3l7cyk5w_us_wifi;
 pub mod f_v__f___w_b_1qeuk;
 pub mod f_v8_y___w_b_2qeuk;
 pub mod f_vb_f___w_b_2qeuk;
