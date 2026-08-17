@@ -710,6 +710,10 @@ impl Device {
             );
         }
 
+        // Display light (PR #40) — TLV 0x21f. Always advertise; units without the tag
+        // simply never update the state.
+        self.add_config_switch_field(&mut config, 0x21f, "light", "Light", "mdi:lightbulb");
+
         if self.has_cap_or_tag(0x2cc, 4, 0x20e) {
             self.add_config_switch_field(&mut config, 0x20e, "autodry", "Auto dry", "mdi:hair-dryer");
             config.components.insert(
@@ -1312,6 +1316,10 @@ mod tests {
         assert!(c.contains_key("starttimer"));
         assert!(c.contains_key("stoptimer"));
         assert!(c.contains_key("airclean"));
+        // PR #40: display light switch (TLV 0x21f)
+        assert!(c.contains_key("light"));
+        assert_eq!(c["light"]["platform"], "switch");
+        assert_eq!(c["light"]["icon"], "mdi:lightbulb");
         assert_eq!(
             c["climate"]["swing_modes"],
             json!(["1", "2", "3", "4", "5", "6", "on", "off"])
