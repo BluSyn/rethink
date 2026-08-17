@@ -45,6 +45,8 @@ pub fn t2_factory(model_id: &str) -> Option<T2Factory> {
         "DHUM_231006_WW" => Some(devices::dhum_231006_ww::create),
         "HUM_056905_WW" => Some(devices::hum_056905_ww::create),
         "STUDIO_HOOD" => Some(devices::studio_hood::create),
+        // PR #123 model string variant (B__ vs B_2) — same F_V8 handler family
+        "F_V7_Y___W.B__QEUK" => Some(devices::f_v8_y___w_b_2qeuk::create),
         _ => None,
     }
 }
@@ -91,6 +93,7 @@ pub fn all_t2_model_ids() -> Vec<&'static str> {
         "DHUM_231006_WW",
         "HUM_056905_WW",
         "STUDIO_HOOD",
+        "F_V7_Y___W.B__QEUK",
     ]
 }
 
