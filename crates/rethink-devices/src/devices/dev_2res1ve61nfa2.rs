@@ -173,7 +173,7 @@ pub fn create(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rethink_core::{hex_decode, MockHaConnection, MockThinq2Device};
+    use rethink_core::{hex_decode, hex_encode, MockHaConnection, MockThinq2Device};
 
     const DEVICE_ID: &str = "test-id";
     const SAMPLE_INITIAL: &str = "AA2110EB0202040107000000010001FFFFFF00FF0001FFFFFFFFFFFFFF020085BB";
@@ -209,4 +209,62 @@ mod tests {
             Some("OFF".into())
         );
     }
+
+    // extra fixtures from former integration test
+    const SAMPLE_DELTA: &str =
+    "AA3C10EC0201040102000001010001FFFFFF00FF0100FFFFFFFFFFFFFF02060202040102000001010001FFFFFF00FF0100FFFFFFFFFFFFFF0206ACBB";
+    const SAMPLE_QUIESCENT: &str =
+    "AA3C10EC0202040102000000010001FFFFFF00FF0000FFFFFFFFFFFFFF02010202040102000000010001FFFFFF00FF0000FFFFFFFFFFFFFF0202B8BB";
+    fn prop(ha: &MockHaConnection, name: &str) -> Option<String> {
+        ha.device(DEVICE_ID)?.properties.get(name).map(|p| p.as_string())
+    }
+    #[test]
+    fn config_not_until_status() {
+        let (ha, _, _) = make();
+        assert!(ha.device(DEVICE_ID).is_none());
+    }
+
+    #[test]
+    fn delta_door_express() {
+        let (ha, thinq, _) = make();
+        thinq.emit_data(&hex_decode(SAMPLE_DELTA));
+        assert_eq!(prop(&ha, "door").as_deref(), Some("ON"));
+        assert_eq!(prop(&ha, "express_cool").as_deref(), Some("ON"));
+        thinq.emit_data(&hex_decode(SAMPLE_QUIESCENT));
+        assert_eq!(prop(&ha, "door").as_deref(), Some("OFF"));
+        assert_eq!(prop(&ha, "express_cool").as_deref(), Some("OFF"));
+    }
+
+    #[test]
+    fn start_and_writes() {
+        let (_, thinq, dev) = make();
+        thinq.reset_recorder();
+        dev.start();
+        assert_eq!(hex_encode(&thinq.outbox()[0]), "AA0EF0ED1211010000010400EBBB");
+
+        thinq.emit_data(&hex_decode(SAMPLE_INITIAL));
+        thinq.reset_recorder();
+        dev.set_property("fridge_setpoint", "4");
+        let pkt = thinq.outbox()[0].clone();
+        assert_eq!(pkt[4 + 1], 4);
+        assert_eq!(pkt[4 + 8], 1);
+        assert_eq!(pkt[4 + 0], 0xff);
+
+        thinq.reset_recorder();
+        dev.set_property("freezer_setpoint", "-20");
+        assert_eq!(thinq.outbox()[0][4 + 2], 6);
+
+        thinq.reset_recorder();
+        dev.set_property("express_cool", "ON");
+        assert_eq!(thinq.outbox()[0][4 + 16], 1);
+
+        thinq.reset_recorder();
+        dev.set_property("express_freeze", "ON");
+        assert_eq!(thinq.outbox()[0][4 + 3], 2);
+
+        thinq.reset_recorder();
+        dev.set_property("does-not-exist", "1");
+        assert_eq!(thinq.outbox().len(), 0);
+    }
+
 }

@@ -114,8 +114,8 @@ Management UI shows **name + code** (e.g. `A/C (401)`). Map lives in `html/panel
 
 ## Adding support (Rust)
 
-1. Implement handler under `crates/rethink-devices/src/devices/`.
-2. One registry line in `registry.rs` (`t2_factory` / `t1_factory`) + `all_t*_model_ids`.
+1. Implement handler under `crates/rethink-devices/src/devices/` (tests in the same file).
+2. One line in the `register_devices!` table in `devices/mod.rs`.
 3. Fixture tests from PR captures or live `monitor` LLM export.
 4. See wiki *Adding-support-for-a-new-device* and management RE panel.
 

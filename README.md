@@ -101,9 +101,8 @@ See [installation instructions](https://github.com/anszom/rethink/wiki/Installin
 
 ### Adding a new device
 
-1. Implement a handler module under `crates/rethink-devices/src/devices/` that constructs an HA device (typically via `TlvDeviceCore` or `AabbDeviceCore`) and returns `Arc<dyn DeviceHandler>`.
-2. Register **one line** in `crates/rethink-devices/src/registry.rs` (`t1_factory` or `t2_factory`) mapping the appliance `modelId` to your `create` factory.
-3. Add a unit test under the same module (or `tests/`) using `MockHaConnection` + `MockThinq2Device` / `MockThinq1Device`.
+1. Implement a handler module under `crates/rethink-devices/src/devices/` that constructs an HA device (typically via `TlvDeviceCore` or `AabbDeviceCore`) and returns `Arc<dyn DeviceHandler>`. Put fixture tests in a `#[cfg(test)]` module **in that same file**.
+2. Register **one line** in the `register_devices!` table in `crates/rethink-devices/src/devices/mod.rs` (`module => { "MODEL_ID" | "ALIAS" }`).
 
 No other crates need to change for a new model.
 

@@ -270,7 +270,7 @@ pub fn create(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rethink_core::{hex_decode, hex_encode, MockHaConnection, MockThinq2Device};
+    use rethink_core::{hex_encode, MockHaConnection, MockThinq2Device};
 
     const DEVICE_ID: &str = "test-id";
 

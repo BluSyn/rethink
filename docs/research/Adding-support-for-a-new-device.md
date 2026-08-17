@@ -67,7 +67,7 @@ Good reference points:
 - AABB washer/dryer: `f_v8_y___w_b_2qeuk.rs`
 - ThinQ1 washer: `wtdn3.rs`
 
-Register the modelId in [`registry.rs`](../../crates/rethink-devices/src/registry.rs) (`t1_factory` / `t2_factory` + `all_t2_model_ids`). Aliases can share one factory.
+Register the modelId with **one line** in the `register_devices!` table in [`devices/mod.rs`](../../crates/rethink-devices/src/devices/mod.rs). Aliases can share one module (`module => { "ID" | "ALIAS" }`). Put tests in a `#[cfg(test)]` module in the same device file.
 
 ### TLV devices
 
