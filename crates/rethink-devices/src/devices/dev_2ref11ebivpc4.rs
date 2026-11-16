@@ -1,9 +1,10 @@
 //! 2REF11EBIVPC4 fridge — always Celsius, 43-byte status, Shabbat mode.
+//!
+//! Status and commands share one encoding, two raw units per degree. The shared
+//! 8−C and −14−C conversions do not apply: 3°C is raw 7, not raw 5.
 
 use crate::device_trait::DeviceHandler;
-use crate::fridge_common::{
-    convert_freezer_temperature, convert_fridge_temperature, freezer_range, fridge_range,
-};
+use crate::fridge_common::{freezer_range, fridge_range};
 use rethink_core::device_base::{default_config, AabbDeviceCore};
 use rethink_core::ha::{HaConnection, PropertyValue};
 use rethink_core::metadata::Metadata;
@@ -20,8 +21,10 @@ impl Device {
         let core = AabbDeviceCore::new(ha, thinq.clone());
         let this = Arc::new(Self { core: core.clone() });
 
-        let (fridge_uom, fridge_min, fridge_max) = fridge_range(crate::fridge_common::TemperatureUnit::C);
-        let (freezer_uom, freezer_min, freezer_max) = freezer_range(crate::fridge_common::TemperatureUnit::C);
+        let (fridge_uom, fridge_min, _) = fridge_range(crate::fridge_common::TemperatureUnit::C);
+        let fridge_max = 6;
+        let (freezer_uom, _, freezer_max) = freezer_range(crate::fridge_common::TemperatureUnit::C);
+        let freezer_min = -21;
         let mut config = default_config(&meta, Some(json!({"name": "LG Fridge"})));
         config.components = [
             (
@@ -147,13 +150,13 @@ impl DeviceHandler for Device {
         match prop {
             "fridge_setpoint" => {
                 let n: i32 = mqtt_value.parse().unwrap_or(0);
-                base[2 + 1] = convert_fridge_temperature(crate::fridge_common::TemperatureUnit::C, n) as u8;
+                base[2 + 1] = (13 - 2 * n) as u8;
                 base[2 + 8] = 1;
                 self.core.send(&base);
             }
             "freezer_setpoint" => {
                 let n: i32 = mqtt_value.parse().unwrap_or(0);
-                base[2 + 2] = convert_freezer_temperature(crate::fridge_common::TemperatureUnit::C, n) as u8;
+                base[2 + 2] = (-2 * n - 29) as u8;
                 base[2 + 8] = 1;
                 self.core.send(&base);
             }
@@ -206,8 +209,8 @@ mod tests {
         let comps = &dev.config.unwrap().components;
         assert_eq!(comps["fridge_setpoint"]["unit_of_measurement"], json!("°C"));
         assert_eq!(comps["fridge_setpoint"]["min"], json!(1));
-        assert_eq!(comps["fridge_setpoint"]["max"], json!(7));
-        assert_eq!(comps["freezer_setpoint"]["min"], json!(-23));
+        assert_eq!(comps["fridge_setpoint"]["max"], json!(6));
+        assert_eq!(comps["freezer_setpoint"]["min"], json!(-21));
         assert!(comps.contains_key("express_freeze"));
         assert!(comps.contains_key("shabbat_mode"));
         assert!(!comps.contains_key("flex_setpoint"));
@@ -236,7 +239,8 @@ mod tests {
         let comps = &devinfo.config.as_ref().unwrap().components;
         assert_eq!(comps["fridge_setpoint"]["unit_of_measurement"], "°C");
         assert_eq!(comps["fridge_setpoint"]["min"], 1);
-        assert_eq!(comps["freezer_setpoint"]["min"], -23);
+        assert_eq!(comps["fridge_setpoint"]["max"], 6);
+        assert_eq!(comps["freezer_setpoint"]["min"], -21);
         assert!(comps.contains_key("express_freeze"));
         assert!(comps.contains_key("shabbat_mode"));
         assert!(!comps.contains_key("flex_setpoint"));
@@ -276,12 +280,16 @@ mod tests {
         let pkt = thinq.outbox()[0].clone();
         assert_eq!(pkt[2], 0xf0);
         assert_eq!(pkt[3], 0x17);
-        assert_eq!(pkt[5], 3);
+        assert_eq!(pkt[5], 3); // 13 - 2*5
         assert_eq!(pkt[12], 1);
 
         thinq.reset_recorder();
+        dev.set_property("fridge_setpoint", "3");
+        assert_eq!(thinq.outbox()[0][5], 7); // 13 - 2*3, same raw the status block reports for 3°C
+
+        thinq.reset_recorder();
         dev.set_property("freezer_setpoint", "-20");
-        assert_eq!(thinq.outbox()[0][6], 6);
+        assert_eq!(thinq.outbox()[0][6], 11); // -2*(-20) - 29
         assert_eq!(thinq.outbox()[0][12], 1);
 
         thinq.reset_recorder();
