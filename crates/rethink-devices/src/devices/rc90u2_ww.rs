@@ -59,6 +59,10 @@ const STATES: &[(u8, &str)] = &[
     (3, "Paused"),
     (4, "End"),
     (5, "Error"),
+    (8, "Smart Diagnosis"),
+    (50, "Drying"),
+    (51, "Cooling"),
+    (56, "Wrinkle care"),
     (100, "Delayed"),
 ];
 
@@ -116,6 +120,7 @@ const ERRORS: &[(u8, &str)] = &[
     (0, "OK"),
     (1, "Temperature sensor error (tE1)"),
     (2, "Temperature sensor error (tE2)"),
+    (4, "Temperature sensor error (tE4)"),
     (7, "Condenser error (CE1)"),
     (13, "Drain motor error"),
     (14, "Empty water container"),
@@ -126,6 +131,7 @@ const ERRORS: &[(u8, &str)] = &[
     (21, "Unknown error (AE)"),
     (30, "Motor error (LE1)"),
     (37, "Door sensor error (dE4)"),
+    (42, "Door lock error (dE2)"),
 ];
 
 const NO_YES: [&str; 2] = ["No", "Yes"];
@@ -1487,5 +1493,29 @@ mod tests {
         ] {
             assert!(components[key].get("unique_id").is_some(), "{key}");
         }
+    }
+
+    fn with_error(frame: &str, code: u8) -> Vec<u8> {
+        let mut buf = hex_decode(frame);
+        let end = buf.len() - 2;
+        let pos = buf[2..end].iter().rposition(|&b| b == 0x19).unwrap() + 2;
+        buf[pos + 7] = code;
+        buf
+    }
+
+    #[test]
+    fn rc90_error_table_includes_te4_and_de2() {
+        let (ha, thinq, _) = make("RC90U2_WW");
+        thinq.emit_data(&with_error(EB_READY_COTTON, 4));
+        assert_eq!(
+            prop(&ha, "error_message"),
+            "Temperature sensor error (tE4)".into()
+        );
+        assert_eq!(prop(&ha, "error"), "ON".into());
+        thinq.emit_data(&with_error(EB_READY_COTTON, 42));
+        assert_eq!(prop(&ha, "error_message"), "Door lock error (dE2)".into());
+        thinq.emit_data(&with_error(EB_READY_COTTON, 0));
+        assert_eq!(prop(&ha, "error"), "OFF".into());
+        assert_eq!(prop(&ha, "error_message"), "OK".into());
     }
 }

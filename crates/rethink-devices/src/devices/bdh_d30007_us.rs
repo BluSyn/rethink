@@ -108,7 +108,56 @@ fn dry_level_name(c: u8) -> Option<&'static str> {
     }
 }
 fn eco_name(c: u8) -> Option<&'static str> {
-    match c { 1 => Some("Eco"), 2 => Some("Normal"), 3 => Some("Turbo"), _ => None }
+    match c {
+        0 => Some("Not selected"),
+        1 => Some("Eco"),
+        2 => Some("Normal"),
+        3 => Some("Turbo"),
+        _ => None,
+    }
+}
+fn error_name(c: u8) -> Option<&'static str> {
+    Some(match c {
+        0 => "OK",
+        1 => "Temperature sensor error (tE1)",
+        2 => "Temperature sensor error (tE2)",
+        3 => "Temperature sensor error (tE3)",
+        4 => "Temperature sensor error (tE4)",
+        5 => "Temperature sensor error (tE5)",
+        6 => "Temperature sensor error (tE6)",
+        7 => "Condenser error (CE1)",
+        8 => "Condenser error (CE2)",
+        9 => "Heater error (HE1)",
+        10 => "Unknown error (E1)",
+        11 => "Unknown error (E3)",
+        12 => "Unknown error (E4)",
+        13 => "Unknown error (E5)",
+        14 => "Drain motor error (OE)",
+        15 => "Empty water container",
+        16 => "Door open (dE1)",
+        17 => "Filter clogged",
+        18 => "Filter missing",
+        19 => "EEPROM error",
+        20 => "Unknown error (F1)",
+        21 => "Motor error (LE2)",
+        22 => "Unknown error (AE)",
+        31 => "Motor error (LE1)",
+        38 => "Door sensor error (dE4)",
+        40 => "Motor error (LE3)",
+        43 => "Door lock error (dE2)",
+        44 => "Unknown error (PS)",
+        46 => "Unknown error (HS)",
+        47 => "Clothes not drying",
+        48 => "Unknown error (nP)",
+        49 => "Unknown error (IR)",
+        50 => "Unknown error (BF1)",
+        51 => "Gas error",
+        52 => "Unknown error (dE5)",
+        53 => "Dehumidification error",
+        54 => "Unknown error (LO)",
+        55 => "Unknown error (CC)",
+        _ => return None,
+    })
 }
 fn buzzer_name(c: u8) -> Option<&'static str> {
     match c { 0 => Some("Off"), 1 => Some("1"), 2 => Some("2"), 3 => Some("3"), 4 => Some("4"), _ => None }
@@ -124,7 +173,47 @@ const STATE_OPTS: &[&str] = &[
 const COURSE_OPTS: &[&str] = &["Towels","Bedding","Perm. Press","Normal","Activewear","Small Load","Delicates","Air Dry","Bedding Refresh","Power Dry","Heavy Duty","Condenser Care","Drum Care","Down Jacket Refresh","Timed Dry","Outerwear Refresh","Quick Dry","AI Dry","Silent Dry","Shrinkage Relief","Rainy Days","Easy Ironing","Downloaded cycle"];
 const DOWNLOAD_OPTS: &[&str] = &["None","Wrinkle Prevention","Rack Dry"];
 const DRY_LEVEL_OPTS: &[&str] = &["Not selected", "Damp", "Less", "Normal", "More", "Very"];
-const ECO_OPTS: &[&str] = &["Eco","Normal","Turbo"];
+const ECO_OPTS: &[&str] = &["Not selected", "Eco", "Normal", "Turbo"];
+const ERROR_OPTS: &[&str] = &[
+    "OK",
+    "Temperature sensor error (tE1)",
+    "Temperature sensor error (tE2)",
+    "Temperature sensor error (tE3)",
+    "Temperature sensor error (tE4)",
+    "Temperature sensor error (tE5)",
+    "Temperature sensor error (tE6)",
+    "Condenser error (CE1)",
+    "Condenser error (CE2)",
+    "Heater error (HE1)",
+    "Unknown error (E1)",
+    "Unknown error (E3)",
+    "Unknown error (E4)",
+    "Unknown error (E5)",
+    "Drain motor error (OE)",
+    "Empty water container",
+    "Door open (dE1)",
+    "Filter clogged",
+    "Filter missing",
+    "EEPROM error",
+    "Unknown error (F1)",
+    "Motor error (LE2)",
+    "Unknown error (AE)",
+    "Motor error (LE1)",
+    "Door sensor error (dE4)",
+    "Motor error (LE3)",
+    "Door lock error (dE2)",
+    "Unknown error (PS)",
+    "Unknown error (HS)",
+    "Clothes not drying",
+    "Unknown error (nP)",
+    "Unknown error (IR)",
+    "Unknown error (BF1)",
+    "Gas error",
+    "Unknown error (dE5)",
+    "Dehumidification error",
+    "Unknown error (LO)",
+    "Unknown error (CC)",
+];
 // Options order as upstream publishes it: JavaScript lists integer-like keys first.
 const BUZZER_OPTS: &[&str] = &["1","2","3","4","Off"];
 
@@ -136,6 +225,8 @@ impl Device {
         cfg.components = [
             ("power".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-power","state_topic":"$this/power","name":"Power","icon":"mdi:tumble-dryer","device_class":"running"})),
             ("status".into(), json!({"platform":"sensor","unique_id":"$deviceid-status","state_topic":"$this/status","name":"Status","icon":"mdi:state-machine","device_class":"enum","options":STATE_OPTS})),
+            ("error".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-error","state_topic":"$this/error","name":"Error","icon":"mdi:check-circle","device_class":"problem","entity_category":"diagnostic"})),
+            ("error_message".into(), json!({"platform":"sensor","unique_id":"$deviceid-error-message","state_topic":"$this/error_message","name":"Error message","icon":"mdi:alert-circle-outline","device_class":"enum","entity_category":"diagnostic","options":ERROR_OPTS})),
             ("download_course".into(), json!({"platform":"sensor","unique_id":"$deviceid-download_course","state_topic":"$this/download_course","name":"Downloaded cycle","icon":"mdi:cloud-download-outline","device_class":"enum","options":DOWNLOAD_OPTS,"entity_category":"diagnostic"})),
             ("course".into(), json!({"platform":"sensor","unique_id":"$deviceid-course","state_topic":"$this/course","name":"Course","icon":"mdi:pin-outline","device_class":"enum","options":COURSE_OPTS})),
             ("remaining_time".into(), json!({"platform":"sensor","unique_id":"$deviceid-remaining_time","state_topic":"$this/remaining_time","name":"Remaining time","icon":"mdi:timer-outline","device_class":"duration","unit_of_measurement":"min"})),
@@ -177,6 +268,9 @@ impl Device {
         let is_off = state == STATE_POWEROFF;
         self.core.publish_on_off("power", !is_off);
         self.core.publish_property("status", named(state_name(state)));
+        let error = rec[15];
+        self.core.publish_property("error_message", named(error_name(error)));
+        self.core.publish_on_off("error", error != 0);
         self.core.publish_property("course", named(course_name(rec[COURSE_OFFSET])));
         self.core.publish_property("download_course", named(download_name(rec[DOWNLOAD_COURSE_OFFSET])));
         self.core.publish_property("dry_level", named(dry_level_name(rec[DRY_LEVEL_OFFSET])));
@@ -488,14 +582,42 @@ mod tests {
         }
     }
 
+    fn with_error(frame: &str, code: u8) -> Vec<u8> {
+        let mut buf = hex_decode(frame);
+        let inner_type = buf[2 + 10];
+        let record = if inner_type == 0xec { 13 + 42 } else { 13 };
+        buf[2 + record + 15] = code;
+        buf
+    }
+
+    #[test]
+    fn error_byte_uses_the_newer_dryer_table() {
+        let (ha, thinq, _) = make();
+        thinq.emit_data(&with_error(TUB_CLEAN, 4));
+        expect(&ha, "error", "ON");
+        expect(&ha, "error_message", "Temperature sensor error (tE4)");
+        thinq.emit_data(&with_error(TUB_CLEAN, 43));
+        expect(&ha, "error_message", "Door lock error (dE2)");
+        thinq.emit_data(&with_error(TUB_CLEAN, 0));
+        expect(&ha, "error", "OFF");
+        expect(&ha, "error_message", "OK");
+        let mut unset = with_error(TUB_CLEAN, 0);
+        let inner_type = unset[2 + 10];
+        let record = if inner_type == 0xec { 13 + 42 } else { 13 };
+        unset[2 + record + 2] = 0;
+        thinq.emit_data(&unset);
+        expect(&ha, "eco_hybrid", "Not selected");
+    }
+
     #[test]
     fn options_list_every_label_once() {
-        let tables: [(&[&str], fn(u8) -> Option<&'static str>); 6] = [
+        let tables: [(&[&str], fn(u8) -> Option<&'static str>); 7] = [
             (STATE_OPTS, state_name),
             (COURSE_OPTS, course_name),
             (DOWNLOAD_OPTS, download_name),
             (DRY_LEVEL_OPTS, dry_level_name),
             (ECO_OPTS, eco_name),
+            (ERROR_OPTS, error_name),
             (BUZZER_OPTS, buzzer_name),
         ];
         for (opts, name) in tables {

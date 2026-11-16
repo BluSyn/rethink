@@ -78,6 +78,7 @@ const STATUS: &[(u8, &str)] = &[
     (0x08, "Smart Diagnosis"),
     (0x33, "Cooling"),
     (0x38, "Wrinkle care"),
+    (100, "Delayed"),
 ];
 // Dial positions plus the base cycles reachable only through a smart course.
 const CYCLE: &[(u8, &str)] = &[
@@ -133,12 +134,21 @@ const TIME_DRY: &[(u8, &str)] = &[
 ];
 const SIGNAL: &[(u8, &str)] = &[(0x00, "Off"), (0x01, "Low"), (0x04, "High")];
 const TEMPS: &[(u8, &str)] = &[
-    (0x00, "Off"),
+    (0x00, "Not selected"),
     (0x01, "Ultra Low"),
     (0x02, "Low"),
     (0x03, "Medium"),
-    (0x04, "Med High"),
+    (0x04, "Mid High"),
     (0x05, "High"),
+];
+const ERRORS: &[(u8, &str)] = &[
+    (0, "OK"),
+    (1, "Temperature sensor error (tE1)"),
+    (2, "Temperature sensor error (tE2)"),
+    (5, "Temperature sensor error (tE5)"),
+    (6, "Temperature sensor error (tE6)"),
+    (13, "Unknown error (PS)"),
+    (19, "Unknown error (nP)"),
 ];
 const DRY_LEVELS: &[(u8, &str)] = &[
     (0x00, "Not selected"),
@@ -190,7 +200,10 @@ fn components() -> HashMap<String, Value> {
         ("downloaded_course", json!({"platform":"sensor","unique_id":"$deviceid-downloaded_course","state_topic":"$this/downloaded_course","name":"Downloaded cycle","icon":"mdi:tray-arrow-down","entity_category":"diagnostic","device_class":"enum","options":labels(SMART_COURSE)})),
         ("time_dry", json!({"platform":"sensor","unique_id":"$deviceid-time_dry","state_topic":"$this/time_dry","name":"Time Dry","icon":"mdi:timer-cog-outline","device_class":"enum","options":labels(TIME_DRY)})),
         ("more_less_time", json!({"platform":"sensor","unique_id":"$deviceid-more_less_time","state_topic":"$this/more_less_time","name":"More/Less time","icon":"mdi:plus-minus-variant","device_class":"duration","unit_of_measurement":"min","entity_category":"diagnostic"})),
-        ("cycle", json!({"platform":"sensor","unique_id":"$deviceid-cycle","state_topic":"$this/cycle","name":"Cycle","icon":"mdi:tumble-dryer","device_class":"enum","options":labels(CYCLE)})),
+        ("course", json!({"platform":"sensor","unique_id":"$deviceid-course","state_topic":"$this/course","name":"Course","icon":"mdi:tumble-dryer","device_class":"enum","options":labels(CYCLE)})),
+        ("cycle", json!({"platform":"sensor"})),
+        ("error", json!({"platform":"binary_sensor","unique_id":"$deviceid-error","state_topic":"$this/error","name":"Error","icon":"mdi:check-circle","device_class":"problem","entity_category":"diagnostic"})),
+        ("error_message", json!({"platform":"sensor","unique_id":"$deviceid-error-message","state_topic":"$this/error_message","name":"Error message","icon":"mdi:alert-circle-outline","device_class":"enum","entity_category":"diagnostic","options":labels(ERRORS)})),
         ("temp", json!({"platform":"sensor","unique_id":"$deviceid-temp","state_topic":"$this/temp","name":"Temperature","icon":"mdi:thermometer","device_class":"enum","options":labels(TEMPS)})),
         ("dry_level", json!({"platform":"sensor","unique_id":"$deviceid-dry_level","state_topic":"$this/dry_level","name":"Dry level","icon":"mdi:water-percent","device_class":"enum","options":labels(DRY_LEVELS)})),
         // Tombstone: the bit published as drum_running is remote_start.
@@ -338,7 +351,11 @@ impl Device {
         self.core
             .publish_property("more_less_time", PropertyValue::Int(more_less));
         self.core
-            .publish_property("cycle", named(CYCLE, rec[COURSE_OFFSET]).into());
+            .publish_property("course", named(CYCLE, rec[COURSE_OFFSET]).into());
+        let error = rec[7];
+        self.core
+            .publish_property("error_message", named(ERRORS, error).into());
+        self.core.publish_on_off("error", error != 0);
         self.core.publish_property(
             "smart_course",
             named(SMART_COURSE, rec[SMART_COURSE_ACTIVE_OFFSET]).into(),
@@ -554,7 +571,7 @@ mod tests {
             "signal",
             "time_dry",
             "more_less_time",
-            "cycle",
+            "course",
             "temp",
             "dry_level",
         ] {
@@ -654,13 +671,13 @@ mod tests {
 
     #[test]
     fn powered_off_dryer_reports_no_cycle_rather_than_an_unknown_one() {
-        expect(&feed(&[EC_POWER_OFF]), "cycle", "Not selected");
+        expect(&feed(&[EC_POWER_OFF]), "course", "Not selected");
     }
 
     #[test]
     fn heavy_duty_capture_decodes_its_own_declared_defaults() {
         let p = feed(&[EC_HEAVY_DUTY]);
-        expect(&p, "cycle", "Heavy Duty");
+        expect(&p, "course", "Heavy Duty");
         expect(&p, "dry_level", "Normal");
         expect(&p, "temp", "High");
     }
@@ -668,7 +685,7 @@ mod tests {
     #[test]
     fn time_dry_has_no_dry_level_and_carries_the_newly_pressed_temperature() {
         let p = feed(&[EC_TIME_DRY_SETUP]);
-        expect(&p, "cycle", "Time Dry");
+        expect(&p, "course", "Time Dry");
         expect(&p, "dry_level", "Not selected");
         expect(&p, "temp", "Ultra Low");
     }
@@ -678,7 +695,7 @@ mod tests {
         let starting = feed(&[LIVE_PANEL_START]);
         expect(&starting, "status", "Drying");
         expect(&starting, "remote_start", "OFF");
-        expect(&starting, "cycle", "Bedding");
+        expect(&starting, "course", "Bedding");
 
         let armed = feed(&[LIVE_PANEL_START_ARMED]);
         expect(&armed, "status", "Drying");
@@ -764,7 +781,7 @@ mod tests {
     fn time_dry_duration() {
         let p = feed(&[TIMEDRY_60]);
         expect(&p, "time_dry", "60 min");
-        expect(&p, "cycle", "Time Dry");
+        expect(&p, "course", "Time Dry");
         expect(&p, "remaining_time", "60");
     }
 
@@ -788,15 +805,15 @@ mod tests {
 
     #[test]
     fn smart_courses_expose_base_cycles_that_are_not_on_the_dial() {
-        expect(&feed(&[DL_BLANKETS]), "cycle", "Jumbo Dry");
-        expect(&feed(&[DL_SUPER_DRY]), "cycle", "Super Dry");
-        expect(&feed(&[DL_ULTRA_DELICATES]), "cycle", "Ultra Delicates");
+        expect(&feed(&[DL_BLANKETS]), "course", "Jumbo Dry");
+        expect(&feed(&[DL_SUPER_DRY]), "course", "Super Dry");
+        expect(&feed(&[DL_ULTRA_DELICATES]), "course", "Ultra Delicates");
     }
 
     #[test]
     fn each_smart_course_carries_its_declared_settings() {
         let socks = feed(&[DL_SOCKS]);
-        expect(&socks, "cycle", "Time Dry");
+        expect(&socks, "course", "Time Dry");
         expect(&socks, "time_dry", "30 min");
         expect(&socks, "more_less_time", "5");
         expect(&socks, "temp", "High");
@@ -946,11 +963,11 @@ mod tests {
     #[test]
     fn time_dry_reports_no_dry_level_and_the_selected_heat() {
         assert_eq!(
-            values(&feed(&[EC_TIME_DRY_SETUP]), &["cycle", "dry_level", "temp"]),
+            values(&feed(&[EC_TIME_DRY_SETUP]), &["course", "dry_level", "temp"]),
             ["Time Dry", "Not selected", "Ultra Low"]
         );
         assert_eq!(
-            values(&feed(&[EC_RESUMED]), &["cycle", "dry_level", "temp"]),
+            values(&feed(&[EC_RESUMED]), &["course", "dry_level", "temp"]),
             ["Time Dry", "Not selected", "Low"]
         );
     }
@@ -991,13 +1008,13 @@ mod tests {
                 &[
                     "status",
                     "remaining_time",
-                    "cycle",
+                    "course",
                     "temp",
                     "dry_level",
                     "remote_start"
                 ]
             ),
-            ["Drying", "30", "Normal", "Med High", "Normal", "ON"]
+            ["Drying", "30", "Normal", "Mid High", "Normal", "ON"]
         );
         let mins: Vec<String> = LIVE_EC
             .iter()
@@ -1026,12 +1043,12 @@ mod tests {
                     "status",
                     "remaining_time",
                     "power",
-                    "cycle",
+                    "course",
                     "temp",
                     "dry_level"
                 ]
             ),
-            ["Off", "0", "OFF", "Not selected", "Off", "Not selected"]
+            ["Off", "0", "OFF", "Not selected", "Not selected", "Not selected"]
         );
     }
 
@@ -1040,7 +1057,7 @@ mod tests {
         assert_eq!(
             values(
                 &feed(&[LIVE_OFF_RECONNECT]),
-                &["status", "remaining_time", "cycle", "dry_level"]
+                &["status", "remaining_time", "course", "dry_level"]
             ),
             ["Off", "0", "Not selected", "Not selected"]
         );
@@ -1089,16 +1106,17 @@ mod tests {
                 "Error",
                 "Smart Diagnosis",
                 "Cooling",
-                "Wrinkle care"
+                "Wrinkle care",
+                "Delayed"
             ])
         );
         for (key, first, len) in [
-            ("cycle", "Not selected", 18),
+            ("course", "Not selected", 18),
             ("smart_course", "Not selected", 21),
             ("downloaded_course", "Not selected", 21),
             ("time_dry", "Not selected", 6),
             ("signal", "Off", 3),
-            ("temp", "Off", 6),
+            ("temp", "Not selected", 6),
             ("dry_level", "Not selected", 6),
         ] {
             let options = comps[key]["options"].as_array().unwrap();
@@ -1124,6 +1142,32 @@ mod tests {
             dev.set_property(prop, "PRESS");
         }
         assert!(thinq.outbox().is_empty());
+    }
+
+    fn with_marker_byte(frame: &str, offset: usize, code: u8) -> Vec<u8> {
+        let mut buf = hex_decode(frame);
+        let end = buf.len() - 2;
+        let pos = buf[2..end].iter().rposition(|&b| b == 0x1b).unwrap() + 2;
+        buf[pos + offset] = code;
+        buf
+    }
+
+    #[test]
+    fn course_replaces_cycle_and_the_error_byte_is_marker_relative() {
+        let ha = feed(&[EC_HEAVY_DUTY]);
+        assert_eq!(
+            components_of(&ha)["cycle"],
+            json!({"platform": "sensor"})
+        );
+        assert!(prop(&ha, "cycle").is_none());
+        assert!(prop(&ha, "course").is_some());
+        let (ha, thinq, _) = make();
+        thinq.emit_data(&with_marker_byte(EC_HEAVY_DUTY, 7, 2));
+        expect(&ha, "error", "ON");
+        expect(&ha, "error_message", "Temperature sensor error (tE2)");
+        thinq.emit_data(&with_marker_byte(EC_HEAVY_DUTY, 7, 0));
+        expect(&ha, "error", "OFF");
+        expect(&ha, "error_message", "OK");
     }
 
     #[test]

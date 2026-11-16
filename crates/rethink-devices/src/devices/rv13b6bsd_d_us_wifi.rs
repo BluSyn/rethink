@@ -45,6 +45,7 @@ const STATUS: &[(u8, &str)] = &[
     (0x32, "Drying"),
     (0x33, "Cooling"),
     (0x38, "Wrinkle care"),
+    (100, "Delayed"),
 ];
 const COURSE: &[(u8, &str)] = &[
     (0x01, "Heavy Duty"),
@@ -63,8 +64,8 @@ const COURSE: &[(u8, &str)] = &[
     (0x16, "Steam Sanitary"),
     (0x1a, "Super Dry"),
 ];
-// 0 (no dry level / no temperature) is left unmapped, so those courses publish "None".
 const DRY_LEVEL: &[(u8, &str)] = &[
+    (0, "Not selected"),
     (1, "Damp"),
     (2, "Less"),
     (3, "Normal"),
@@ -72,11 +73,21 @@ const DRY_LEVEL: &[(u8, &str)] = &[
     (5, "Very"),
 ];
 const TEMP: &[(u8, &str)] = &[
+    (0, "Not selected"),
     (1, "Ultra Low"),
     (2, "Low"),
     (3, "Medium"),
     (4, "Mid High"),
     (5, "High"),
+];
+const ERRORS: &[(u8, &str)] = &[
+    (0, "OK"),
+    (1, "Temperature sensor error (tE1)"),
+    (2, "Temperature sensor error (tE2)"),
+    (5, "Temperature sensor error (tE5)"),
+    (6, "Temperature sensor error (tE6)"),
+    (13, "Unknown error (PS)"),
+    (19, "Unknown error (nP)"),
 ];
 
 fn named(table: &'static [(u8, &'static str)], code: u8) -> Option<&'static str> {
@@ -86,10 +97,22 @@ fn named(table: &'static [(u8, &'static str)], code: u8) -> Option<&'static str>
         .map(|(_, name)| *name)
 }
 
+fn labels(table: &'static [(u8, &'static str)]) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    for (_, name) in table {
+        if !out.contains(name) {
+            out.push(*name);
+        }
+    }
+    out
+}
+
 fn components() -> HashMap<String, Value> {
     [
         ("power", json!({"platform":"binary_sensor","unique_id":"$deviceid-power","state_topic":"$this/power","name":"Power","icon":"mdi:tumble-dryer","device_class":"running"})),
-        ("status", json!({"platform":"sensor","unique_id":"$deviceid-status","state_topic":"$this/status","name":"Status","icon":"mdi:state-machine"})),
+        ("status", json!({"platform":"sensor","unique_id":"$deviceid-status","state_topic":"$this/status","name":"Status","icon":"mdi:state-machine","device_class":"enum","options":labels(STATUS)})),
+        ("error", json!({"platform":"binary_sensor","unique_id":"$deviceid-error","state_topic":"$this/error","name":"Error","icon":"mdi:check-circle","device_class":"problem","entity_category":"diagnostic"})),
+        ("error_message", json!({"platform":"sensor","unique_id":"$deviceid-error-message","state_topic":"$this/error_message","name":"Error message","icon":"mdi:alert-circle-outline","device_class":"enum","entity_category":"diagnostic","options":labels(ERRORS)})),
         ("course", json!({"platform":"sensor","unique_id":"$deviceid-course","state_topic":"$this/course","name":"Course","icon":"mdi:pin-outline"})),
         ("remaining_time", json!({"platform":"sensor","unique_id":"$deviceid-remaining_time","state_topic":"$this/remaining_time","name":"Remaining time","icon":"mdi:timer-outline","device_class":"duration","unit_of_measurement":"min"})),
         ("initial_time", json!({"platform":"sensor","unique_id":"$deviceid-initial_time","state_topic":"$this/initial_time","name":"Initial time estimate","icon":"mdi:clock-outline","device_class":"duration","unit_of_measurement":"min","entity_category":"diagnostic"})),
@@ -154,6 +177,12 @@ impl Device {
         self.core.publish_on_off("power", !is_off);
         self.core
             .publish_property("status", named(STATUS, phase).unwrap_or("None").into());
+        let error = rec[7];
+        self.core.publish_property(
+            "error_message",
+            named(ERRORS, error).unwrap_or("None").into(),
+        );
+        self.core.publish_on_off("error", error != 0);
         self.core.publish_property(
             "course",
             named(COURSE, rec[COURSE_OFFSET]).unwrap_or("None").into(),
@@ -454,5 +483,29 @@ mod tests {
         ] {
             expect(&ha, name, "ON");
         }
+    }
+
+    fn with_marker_byte(frame: &str, offset: usize, code: u8) -> Vec<u8> {
+        let mut buf = hex_decode(frame);
+        let end = buf.len() - 2;
+        let pos = buf[2..end].iter().rposition(|&b| b == 0x1b).unwrap() + 2;
+        buf[pos + offset] = code;
+        buf
+    }
+
+    #[test]
+    fn error_and_unset_levels_use_the_shared_tables() {
+        let (ha, thinq, _) = make();
+        thinq.emit_data(&with_marker_byte(EB_IDLE, 7, 19));
+        expect(&ha, "error", "ON");
+        expect(&ha, "error_message", "Unknown error (nP)");
+        thinq.emit_data(&with_marker_byte(EB_IDLE, 8, 0));
+        expect(&ha, "dry_level", "Not selected");
+        thinq.emit_data(&with_marker_byte(EB_IDLE, 9, 0));
+        expect(&ha, "temp", "Not selected");
+        thinq.emit_data(&with_marker_byte(EB_IDLE, 1, 0x38));
+        expect(&ha, "status", "Wrinkle care");
+        thinq.emit_data(&with_marker_byte(EB_IDLE, 1, 100));
+        expect(&ha, "status", "Delayed");
     }
 }

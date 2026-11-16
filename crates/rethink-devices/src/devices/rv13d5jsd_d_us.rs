@@ -30,6 +30,7 @@ const STATUS: &[(u8, &str)] = &[
     (0x32, "Drying"),
     (0x33, "Cooling"),
     (0x38, "Wrinkle care"),
+    (100, "Delayed"),
 ];
 const COURSES: &[(u8, &str)] = &[
     (0x01, "Heavy Duty"),
@@ -47,8 +48,16 @@ const COURSES: &[(u8, &str)] = &[
     (0x15, "Steam Fresh"),
     (0x16, "Steam Sanitary"),
 ];
-const DRY_LEVELS: &[(u8, &str)] = &[(1, "Damp"), (2, "Less"), (3, "Normal"), (4, "More"), (5, "Very")];
+const DRY_LEVELS: &[(u8, &str)] = &[
+    (0, "Not selected"),
+    (1, "Damp"),
+    (2, "Less"),
+    (3, "Normal"),
+    (4, "More"),
+    (5, "Very"),
+];
 const TEMPS: &[(u8, &str)] = &[
+    (0, "Not selected"),
     (1, "Ultra Low"),
     (2, "Low"),
     (3, "Medium"),
@@ -56,6 +65,15 @@ const TEMPS: &[(u8, &str)] = &[
     (5, "High"),
 ];
 const SIGNALS: &[(u8, &str)] = &[(0, "Off"), (1, "Low"), (4, "High")];
+const ERRORS: &[(u8, &str)] = &[
+    (0, "OK"),
+    (1, "Temperature sensor error (tE1)"),
+    (2, "Temperature sensor error (tE2)"),
+    (5, "Temperature sensor error (tE5)"),
+    (6, "Temperature sensor error (tE6)"),
+    (13, "Unknown error (PS)"),
+    (19, "Unknown error (nP)"),
+];
 
 pub struct Device {
     core: Arc<AabbDeviceCore>,
@@ -98,6 +116,12 @@ impl Device {
         self.core.publish_on_off("power", !is_off);
         self.core
             .publish_property("status", named(STATUS, phase).unwrap_or("None").into());
+        let error = rec[7];
+        self.core.publish_property(
+            "error_message",
+            named(ERRORS, error).unwrap_or("None").into(),
+        );
+        self.core.publish_on_off("error", error != 0);
         self.core.publish_property(
             "course",
             if is_off {
@@ -172,6 +196,8 @@ fn components() -> std::collections::HashMap<String, serde_json::Value> {
         ("power".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-power","state_topic":"$this/power","name":"Power","icon":"mdi:tumble-dryer","device_class":"running"})),
         ("power_off".into(), json!({"platform":"button","unique_id":"$deviceid-power_off","command_topic":"$this/power_off/set","payload_press":"PRESS","name":"Power off","icon":"mdi:power-off","availability":[{"topic":"$this/power","payload_available":"ON","payload_not_available":"OFF"}]})),
         ("status".into(), json!({"platform":"sensor","unique_id":"$deviceid-status","state_topic":"$this/status","name":"Run state","icon":"mdi:state-machine","device_class":"enum","options":labels(STATUS)})),
+        ("error".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-error","state_topic":"$this/error","name":"Error","icon":"mdi:check-circle","device_class":"problem","entity_category":"diagnostic"})),
+        ("error_message".into(), json!({"platform":"sensor","unique_id":"$deviceid-error-message","state_topic":"$this/error_message","name":"Error message","icon":"mdi:alert-circle-outline","device_class":"enum","entity_category":"diagnostic","options":labels(ERRORS)})),
         ("dry_completed".into(), json!({"platform":"binary_sensor","unique_id":"$deviceid-dry_completed","state_topic":"$this/dry_completed","name":"Dry completed","icon":"mdi:check-circle"})),
         ("course".into(), json!({"platform":"sensor","unique_id":"$deviceid-course","state_topic":"$this/course","name":"Current course","icon":"mdi:format-list-bulleted"})),
         ("remaining_time".into(), json!({"platform":"sensor","unique_id":"$deviceid-remaining_time","state_topic":"$this/remaining_time","name":"Remaining time","icon":"mdi:timer-outline","device_class":"duration","unit_of_measurement":"min"})),
@@ -390,5 +416,32 @@ mod tests {
             assert!(ha.device(ID).unwrap().properties.is_empty(), "{junk}");
         }
         assert!(crate::t2_factory("RV13D5JSD_D_US").is_some());
+    }
+
+    fn with_marker_byte(frame: &str, offset: usize, code: u8) -> Vec<u8> {
+        let mut buf = hex_decode(frame);
+        let end = buf.len() - 2;
+        let pos = buf[2..end].iter().rposition(|&b| b == 0x1b).unwrap() + 2;
+        buf[pos + offset] = code;
+        buf
+    }
+
+    #[test]
+    fn error_dry_level_and_delayed_follow_the_shared_tables() {
+        let (ha, thinq, _) = make();
+        thinq.emit_data(&with_marker_byte(NORMAL, 7, 1));
+        assert_eq!(prop(&ha, "error"), "ON");
+        assert_eq!(prop(&ha, "error_message"), "Temperature sensor error (tE1)");
+        thinq.emit_data(&with_marker_byte(NORMAL, 7, 0));
+        assert_eq!(prop(&ha, "error"), "OFF");
+        assert_eq!(prop(&ha, "error_message"), "OK");
+        thinq.emit_data(&with_marker_byte(NORMAL, 8, 0));
+        assert_eq!(prop(&ha, "dry_level"), "Not selected");
+        thinq.emit_data(&with_marker_byte(NORMAL, 9, 0));
+        assert_eq!(prop(&ha, "temp"), "Not selected");
+        thinq.emit_data(&with_marker_byte(NORMAL, 1, 100));
+        assert_eq!(prop(&ha, "status"), "Delayed");
+        thinq.emit_data(&with_marker_byte(NORMAL, 7, 99));
+        assert_eq!(prop(&ha, "error_message"), "None");
     }
 }
