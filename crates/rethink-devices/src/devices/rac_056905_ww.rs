@@ -25,6 +25,8 @@ fn display_light_on_value(eeprom_checksum: u32) -> Option<u32> {
         0x4aba | 0x4d06 => Some(0),
         // US-Q19MWZE, firmware 0x885631: 0 = on.
         0x5449 => Some(0),
+        // VM182C9.NKP11, firmware 0x885605: 0 = on.
+        0x4fe8 => Some(0),
         _ => None,
     }
 }
@@ -2057,7 +2059,7 @@ mod tests {
         assert!(display_light_supported(2, 0x4e95));
         assert!(display_light_supported(0x6, 0x4e88));
         // Two Brazilian units on firmware 0x885612 advertise only bit 15 and invert the value.
-        for checksum in [0x4aba, 0x4d06] {
+        for checksum in [0x4aba, 0x4d06, 0x4fe8] {
             assert!(display_light_supported(0x8000, checksum));
             assert_eq!(display_light_on_value(checksum), Some(0));
         }
