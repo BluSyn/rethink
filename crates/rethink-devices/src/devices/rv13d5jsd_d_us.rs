@@ -21,12 +21,15 @@ const PHASE_WRINKLE: u8 = 0x38;
 
 const STATUS: &[(u8, &str)] = &[
     (0x00, "Off"),
-    (0x01, "Initial"),
-    (0x03, "Pause"),
+    (0x01, "Standby"),
+    (0x02, "Drying"),
+    (0x03, "Paused"),
     (0x04, "End"),
+    (0x05, "Error"),
+    (0x08, "Smart Diagnosis"),
     (0x32, "Drying"),
     (0x33, "Cooling"),
-    (0x38, "Wrinkle Care"),
+    (0x38, "Wrinkle care"),
 ];
 const COURSES: &[(u8, &str)] = &[
     (0x01, "Heavy Duty"),
@@ -284,7 +287,7 @@ mod tests {
     fn unknown_phase_clears_status() {
         let (ha, thinq, _) = make();
         thinq.emit_data(&hex_decode(NORMAL));
-        assert_eq!(prop(&ha, "status"), "Initial");
+        assert_eq!(prop(&ha, "status"), "Standby");
         let mut unknown = hex_decode(NORMAL);
         unknown[35] = 0x7f;
         thinq.emit_data(&unknown);
@@ -373,7 +376,7 @@ mod tests {
         let ha = feed(&[DRYING, COOLING, END, SETTLES, NORMAL]);
         assert_eq!(prop(&ha, "dry_completed"), "OFF");
         let ha = feed(&[END, WRINKLE_RUN]);
-        assert_eq!(prop(&ha, "status"), "Wrinkle Care");
+        assert_eq!(prop(&ha, "status"), "Wrinkle care");
         assert_eq!(prop(&ha, "power"), "ON");
         assert_eq!(prop(&ha, "remaining_time"), "0");
         assert_eq!(prop(&ha, "dry_completed"), "ON");

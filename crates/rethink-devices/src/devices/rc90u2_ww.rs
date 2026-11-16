@@ -54,8 +54,8 @@ const OPT2_REMOTE_START: u8 = 0x01;
 
 const STATES: &[(u8, &str)] = &[
     (0, "Off"),
-    (1, "Ready"),
-    (2, "Running"),
+    (1, "Standby"),
+    (2, "Drying"),
     (3, "Paused"),
     (4, "End"),
     (5, "Error"),
@@ -99,8 +99,18 @@ const COURSES: &[(u8, &str)] = &[
 ];
 const FIRST_SMART_COURSE: u8 = 0x65;
 
-const DRY_LEVELS: &[(u8, &str)] = &[(1, "Iron"), (3, "Cupboard"), (4, "Extra")];
-const ECO_HYBRID: &[(u8, &str)] = &[(1, "Eco"), (2, "Normal"), (3, "Time")];
+const DRY_LEVELS: &[(u8, &str)] = &[
+    (0, "Not selected"),
+    (1, "Iron"),
+    (3, "Cupboard"),
+    (4, "Extra"),
+];
+const ECO_HYBRID: &[(u8, &str)] = &[
+    (0, "Not selected"),
+    (1, "Eco"),
+    (2, "Normal"),
+    (3, "Turbo"),
+];
 
 const ERRORS: &[(u8, &str)] = &[
     (0, "OK"),
@@ -891,7 +901,7 @@ mod tests {
         let (ha, thinq, _dev) = make("RC90U2_WW");
         thinq.emit_data(&hex_decode(EB_READY_COTTON));
         assert_eq!(prop(&ha, "power"), "ON".into());
-        assert_eq!(prop(&ha, "status"), "Ready".into());
+        assert_eq!(prop(&ha, "status"), "Standby".into());
         assert_eq!(prop(&ha, "phase"), "None".into());
         assert_eq!(prop(&ha, "course"), "Cotton".into());
         assert_eq!(prop(&ha, "dry_level"), "Cupboard".into());
@@ -952,7 +962,7 @@ mod tests {
             "AA3C30EC001900000000000000000000000000000804000000010000006B00001901000000000000000000000000000804000000000000006B0071BB",
         ));
         assert_eq!(prop(&ha, "power"), "ON".into());
-        assert_eq!(prop(&ha, "status"), "Ready".into());
+        assert_eq!(prop(&ha, "status"), "Standby".into());
         assert_eq!(prop(&ha, "course"), "Cotton".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(0));
     }
@@ -965,16 +975,15 @@ mod tests {
         ));
         assert_eq!(prop(&ha, "course"), "Mixed Fabric".into());
         assert_eq!(prop(&ha, "dry_level"), "Cupboard".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Turbo".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(70));
 
         thinq.emit_data(&hex_decode(
             "AA3C30EC001901010A00000600030302000000000804000000000000006B00001901023700000400000302000000000804000000000000006B002ABB",
         ));
         assert_eq!(prop(&ha, "course"), "Duvet".into());
-        // Timed course, no dry level: the select keeps the last one.
-        assert_eq!(prop(&ha, "dry_level"), "Cupboard".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "dry_level"), "Not selected".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Turbo".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(175));
     }
 
@@ -985,8 +994,8 @@ mod tests {
             "AA3C30EC001901023700000400000302000000000004000000000000006B00001901030000001000000302000000000004000000000000006B003BBB",
         ));
         assert_eq!(prop(&ha, "course"), "Allergy Care".into());
-        assert_eq!(prop(&ha, "dry_level"), "Cupboard".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "dry_level"), "Not selected".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Turbo".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(180));
 
         thinq.emit_data(&hex_decode(
@@ -999,8 +1008,7 @@ mod tests {
             "AA3C30EC001901010F00000E00000102000000000004000000000000006B00001901010000000D00000005000000000004000000000000006B001DBB",
         ));
         assert_eq!(prop(&ha, "course"), "Cool Air".into());
-        // Cool Air has no Eco Hybrid: the select keeps the last one.
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Not selected".into());
         assert_eq!(prop(&ha, "phase"), "None".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(60));
     }
@@ -1025,7 +1033,7 @@ mod tests {
             "AA3C30EC001901021E00000700030102000000000804000000000000006B00001901011E00000700010302000000000804000000000000006B0028BB",
         ));
         assert_eq!(prop(&ha, "dry_level"), "Iron".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Turbo".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(90));
     }
 
@@ -1036,12 +1044,11 @@ mod tests {
             "AA3C30EC001901001E00000D00000005000000000004000000000000006B00001902001E001E0D00000005000000000005000000010000006B00C0BB",
         ));
         assert_eq!(prop(&ha, "power"), "ON".into());
-        assert_eq!(prop(&ha, "status"), "Running".into());
+        assert_eq!(prop(&ha, "status"), "Drying".into());
         assert_eq!(prop(&ha, "phase"), "Cooling".into());
         assert_eq!(prop(&ha, "course"), "Cool Air".into());
-        // No dry level nor Eco Hybrid on Cool Air: the selects keep their defaults.
-        assert_eq!(prop(&ha, "dry_level"), "Cupboard".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Eco".into());
+        assert_eq!(prop(&ha, "dry_level"), "Not selected".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Not selected".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(30));
         assert_eq!(prop(&ha, "initial_time"), PropertyValue::Int(30));
         assert_eq!(prop(&ha, "delay"), "OFF".into());
@@ -1085,14 +1092,14 @@ mod tests {
         assert_eq!(prop(&ha, "phase"), "Drying".into());
         assert_eq!(prop(&ha, "course"), "Mixed Fabric".into());
         assert_eq!(prop(&ha, "dry_level"), "Extra".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Turbo".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(43));
         assert_eq!(prop(&ha, "initial_time"), PropertyValue::Int(80));
         assert_eq!(prop(&ha, "energy"), PropertyValue::Int(964));
         assert_eq!(prop(&ha, "remote_start"), "OFF".into(), "dropped in pause");
 
         thinq.emit_data(&hex_decode(STARTED));
-        assert_eq!(prop(&ha, "status"), "Running".into());
+        assert_eq!(prop(&ha, "status"), "Drying".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(80));
         assert_eq!(prop(&ha, "energy"), PropertyValue::Int(0));
     }
@@ -1132,7 +1139,7 @@ mod tests {
         thinq.emit_data(&hex_decode(PAUSED));
         assert_eq!(prop(&ha, "course"), "Mixed Fabric".into());
         assert_eq!(prop(&ha, "dry_level"), "Extra".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Turbo".into());
 
         dev.set_property("course", "Quick Dry");
         thinq.emit_data(&hex_decode(PAUSED));
@@ -1161,7 +1168,7 @@ mod tests {
 
         dev.set_property("course", "Mixed Fabric");
         dev.set_property("dry_level", "Extra");
-        dev.set_property("eco_hybrid", "Time");
+        dev.set_property("eco_hybrid", "Turbo");
         dev.set_property("anti_crease", "Yes");
 
         thinq.reset_recorder();
@@ -1214,7 +1221,7 @@ mod tests {
         let (ha, thinq, dev) = make("RC90U2_WW");
         DeviceHandler::start(dev.as_ref());
         dev.set_property("course", "Cotton Soft");
-        dev.set_property("eco_hybrid", "Time");
+        dev.set_property("eco_hybrid", "Turbo");
 
         // Same course, Eco Hybrid and delay as the ThinQ app's own "end in 3 hours".
         dev.set_property("start_delay_end", "3");
@@ -1299,14 +1306,14 @@ mod tests {
         thinq.emit_data(&hex_decode(
             "AA3C30EC001901021400000200000302000000000804000000000000006B00001901001E00000900000302000000000804000000000000006B0038BB",
         ));
-        assert_eq!(prop(&ha, "status"), "Ready".into());
+        assert_eq!(prop(&ha, "status"), "Standby".into());
         assert_eq!(prop(&ha, "course"), "Quick Dry".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(30));
 
         thinq.emit_data(&hex_decode(
             "AA3C30EC0019020224030007000401020000000000050000AD0100000071000019020224030007000401030000000000050000AE010000007100A5BB",
         ));
-        assert_eq!(prop(&ha, "status"), "Running".into());
+        assert_eq!(prop(&ha, "status"), "Drying".into());
         assert_eq!(prop(&ha, "phase"), "Drying".into());
         assert_eq!(prop(&ha, "course"), "Cotton".into());
         assert_eq!(prop(&ha, "dry_level"), "Extra".into());
@@ -1361,14 +1368,13 @@ mod tests {
         let (ha, thinq, _dev) = make("RH90V9_WW");
         thinq.emit_data(&hex_decode(RH90_EB_READY));
         assert_eq!(prop(&ha, "power"), "ON".into());
-        assert_eq!(prop(&ha, "status"), "Ready".into());
+        assert_eq!(prop(&ha, "status"), "Standby".into());
         // No course yet: the course select keeps its default.
         assert_eq!(prop(&ha, "course"), "Cotton".into());
 
         thinq.emit_data(&hex_decode(RH90_SPORTS_WEAR));
         assert_eq!(prop(&ha, "course"), "Sports Wear".into());
-        // No dry level on Sports Wear: the select keeps the last one.
-        assert_eq!(prop(&ha, "dry_level"), "Cupboard".into());
+        assert_eq!(prop(&ha, "dry_level"), "Not selected".into());
         assert_eq!(prop(&ha, "eco_hybrid"), "Eco".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(50));
 
@@ -1384,8 +1390,8 @@ mod tests {
 
         thinq.emit_data(&hex_decode(RH90_TUB_CLEAN));
         assert_eq!(prop(&ha, "course"), "Tub Clean".into());
-        assert_eq!(prop(&ha, "dry_level"), "Cupboard".into());
-        assert_eq!(prop(&ha, "eco_hybrid"), "Time".into());
+        assert_eq!(prop(&ha, "dry_level"), "Not selected".into());
+        assert_eq!(prop(&ha, "eco_hybrid"), "Turbo".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(180));
 
         thinq.emit_data(&hex_decode(RH90_DELAY_END_ON));
@@ -1394,7 +1400,7 @@ mod tests {
         assert_eq!(prop(&ha, "anti_crease"), "No".into());
 
         thinq.emit_data(&hex_decode(RH90_START));
-        assert_eq!(prop(&ha, "status"), "Running".into());
+        assert_eq!(prop(&ha, "status"), "Drying".into());
         assert_eq!(prop(&ha, "phase"), "Drying".into());
         assert_eq!(prop(&ha, "remaining_time"), PropertyValue::Int(180));
         assert_eq!(prop(&ha, "initial_time"), PropertyValue::Int(180));

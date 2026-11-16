@@ -69,7 +69,7 @@ const PHASE_END: u8 = 0x04;
 
 const STATUS: &[(u8, &str)] = &[
     (0x00, "Off"),
-    (0x01, "Initial"),
+    (0x01, "Standby"),
     (0x02, "Drying"),
     (0x32, "Drying"),
     (0x03, "Paused"),
@@ -77,7 +77,7 @@ const STATUS: &[(u8, &str)] = &[
     (0x05, "Error"),
     (0x08, "Smart Diagnosis"),
     (0x33, "Cooling"),
-    (0x38, "Wrinkle Care"),
+    (0x38, "Wrinkle care"),
 ];
 // Dial positions plus the base cycles reachable only through a smart course.
 const CYCLE: &[(u8, &str)] = &[
@@ -592,14 +592,14 @@ mod tests {
         expect(&end, "remote_start", "OFF");
 
         let wc = feed(&[LIVE_WRINKLE_CARE]);
-        expect(&wc, "status", "Wrinkle Care");
+        expect(&wc, "status", "Wrinkle care");
         expect(&wc, "pre_state", "End");
         expect(&wc, "wrinkle_care", "ON");
         expect(&wc, "remote_start", "ON");
 
         let door = feed(&[LIVE_DOOR_OPENED]);
         expect(&door, "status", "Off");
-        expect(&door, "pre_state", "Wrinkle Care");
+        expect(&door, "pre_state", "Wrinkle care");
         expect(&door, "power", "OFF");
     }
 
@@ -627,7 +627,7 @@ mod tests {
     #[test]
     fn pre_state_names_the_phase_the_dryer_just_left() {
         expect(&feed(&[EC_RESUMED]), "pre_state", "Paused");
-        expect(&feed(&[LIVE_54_53]), "pre_state", "Initial");
+        expect(&feed(&[LIVE_54_53]), "pre_state", "Standby");
     }
 
     #[test]
@@ -901,7 +901,7 @@ mod tests {
                 &feed(&[EB_RECONNECT]),
                 &["status", "remaining_time", "power"]
             ),
-            ["Initial", "1", "ON"]
+            ["Standby", "1", "ON"]
         );
     }
 
@@ -923,7 +923,7 @@ mod tests {
                 &feed(&[EC_TIME_DRY_SETUP]),
                 &["status", "remaining_time", "power"]
             ),
-            ["Initial", "20", "ON"]
+            ["Standby", "20", "ON"]
         );
     }
 
@@ -1082,14 +1082,14 @@ mod tests {
             comps["pre_state"]["options"],
             json!([
                 "Off",
-                "Initial",
+                "Standby",
                 "Drying",
                 "Paused",
                 "End",
                 "Error",
                 "Smart Diagnosis",
                 "Cooling",
-                "Wrinkle Care"
+                "Wrinkle care"
             ])
         );
         for (key, first, len) in [

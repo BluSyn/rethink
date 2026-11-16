@@ -54,14 +54,33 @@ fn named(v: Option<&'static str>) -> rethink_core::ha::PropertyValue {
 }
 fn state_name(c: u8) -> Option<&'static str> {
     Some(match c {
-        0 => "Off", 1 => "Initial", 2 => "Running", 3 => "Pause", 4 => "End", 5 => "Error",
-        6 => "Audible diagnosis", 7 => "Drying", 8 => "Cooling", 9 => "Wrinkle care",
-        10 => "Reserved", 11 => "Delay load", 12 => "Spin reserve", 13 => "Auto test",
-        14 => "Detecting", 15 => "Steam", 16 => "Clothing recognition", 17 => "Condenser clean",
-        18 => "Bedding brushing", 19 => "Dry refreshing", 20 => "Allergy care",
-        21 => "Condenser care", 22 => "End remote maintain on", 23 => "Dry ready",
-        24 => "Laundry care", 25 => "Dehumidification", 26 => "Dehumidification end",
-        27 => "End waiting", 28 => "Drum care", _ => return None,
+        0 => "Off",
+        1 => "Standby",
+        2 | 7 => "Drying",
+        3 => "Paused",
+        4 | 22 => "End",
+        5 => "Error",
+        6 => "Smart Diagnosis",
+        8 => "Cooling",
+        9 => "Wrinkle care",
+        10 | 12 => "Delayed",
+        11 | 14 => "Detecting",
+        15 => "Steam",
+        16 => "Clothing recognition",
+        17 => "Condenser clean",
+        18 => "Bedding care",
+        19 => "Refreshing",
+        20 => "Allergy care",
+        21 => "Condenser care",
+        23 => "Dry ready",
+        24 => "Laundry care",
+        25 => "Dehumidification",
+        26 => "Dehumidification end",
+        27 => "End waiting",
+        28 => "Drum care",
+        29 => "Cooldown paused",
+        30 => "Cooldown standby",
+        _ => return None,
     })
 }
 fn course_name(c: u8) -> Option<&'static str> {
@@ -78,7 +97,15 @@ fn download_name(c: u8) -> Option<&'static str> {
     match c { 0 => Some("None"), 114 => Some("Wrinkle Prevention"), 140 => Some("Rack Dry"), _ => None }
 }
 fn dry_level_name(c: u8) -> Option<&'static str> {
-    match c { 1 => Some("Damp Dry"), 2 => Some("Less Dry"), 3 => Some("Iron"), 4 => Some("Cupboard"), 5 => Some("Very Dry"), _ => None }
+    match c {
+        0 => Some("Not selected"),
+        1 => Some("Damp"),
+        2 => Some("Less"),
+        3 => Some("Normal"),
+        4 => Some("More"),
+        5 => Some("Very"),
+        _ => None,
+    }
 }
 fn eco_name(c: u8) -> Option<&'static str> {
     match c { 1 => Some("Eco"), 2 => Some("Normal"), 3 => Some("Turbo"), _ => None }
@@ -87,10 +114,16 @@ fn buzzer_name(c: u8) -> Option<&'static str> {
     match c { 0 => Some("Off"), 1 => Some("1"), 2 => Some("2"), 3 => Some("3"), 4 => Some("4"), _ => None }
 }
 
-const STATE_OPTS: &[&str] = &["Off","Initial","Running","Pause","End","Error","Audible diagnosis","Drying","Cooling","Wrinkle care","Reserved","Delay load","Spin reserve","Auto test","Detecting","Steam","Clothing recognition","Condenser clean","Bedding brushing","Dry refreshing","Allergy care","Condenser care","End remote maintain on","Dry ready","Laundry care","Dehumidification","Dehumidification end","End waiting","Drum care"];
+const STATE_OPTS: &[&str] = &[
+    "Off", "Standby", "Drying", "Paused", "End", "Error", "Smart Diagnosis", "Cooling",
+    "Wrinkle care", "Delayed", "Detecting", "Steam", "Clothing recognition", "Condenser clean",
+    "Bedding care", "Refreshing", "Allergy care", "Condenser care", "Dry ready", "Laundry care",
+    "Dehumidification", "Dehumidification end", "End waiting", "Drum care", "Cooldown paused",
+    "Cooldown standby",
+];
 const COURSE_OPTS: &[&str] = &["Towels","Bedding","Perm. Press","Normal","Activewear","Small Load","Delicates","Air Dry","Bedding Refresh","Power Dry","Heavy Duty","Condenser Care","Drum Care","Down Jacket Refresh","Timed Dry","Outerwear Refresh","Quick Dry","AI Dry","Silent Dry","Shrinkage Relief","Rainy Days","Easy Ironing","Downloaded cycle"];
 const DOWNLOAD_OPTS: &[&str] = &["None","Wrinkle Prevention","Rack Dry"];
-const DRY_LEVEL_OPTS: &[&str] = &["Damp Dry","Less Dry","Iron","Cupboard","Very Dry"];
+const DRY_LEVEL_OPTS: &[&str] = &["Not selected", "Damp", "Less", "Normal", "More", "Very"];
 const ECO_OPTS: &[&str] = &["Eco","Normal","Turbo"];
 // Options order as upstream publishes it: JavaScript lists integer-like keys first.
 const BUZZER_OPTS: &[&str] = &["1","2","3","4","Off"];
@@ -297,15 +330,15 @@ mod tests {
     #[test]
     fn dry_level_and_eco_hybrid_read_their_own_bytes() {
         let very = feed(&[DRY_LEVEL_VERY]);
-        expect(&very, "dry_level", "Very Dry");
+        expect(&very, "dry_level", "Very");
         expect(&very, "eco_hybrid", "Normal");
 
         let eco = feed(&[ECO_HYBRID_ECO]);
         expect(&eco, "eco_hybrid", "Eco");
-        expect(&eco, "dry_level", "Iron");
+        expect(&eco, "dry_level", "Normal");
 
         expect(&feed(&[TUB_CLEAN]), "eco_hybrid", "Turbo");
-        expect(&feed(&[TUB_CLEAN]), "dry_level", "None");
+        expect(&feed(&[TUB_CLEAN]), "dry_level", "Not selected");
     }
 
     #[test]
@@ -345,7 +378,7 @@ mod tests {
     fn remote_start_is_the_setting_and_rearms_at_cycle_start() {
         let off = feed(&[REMOTE_START_SWITCHED_OFF]);
         expect(&off, "remote_start", "OFF");
-        expect(&off, "status", "Initial");
+        expect(&off, "status", "Standby");
         expect(&off, "detect_load", "ON");
 
         let started = feed(&[REMOTE_START_SWITCHED_OFF, HAND_STARTED_WITH_REMOTE_OFF]);
@@ -389,7 +422,7 @@ mod tests {
     #[test]
     fn remote_started_cycle_ends_in_remote_maintain() {
         let p = feed(&[COOLING, END_REMOTE_MAINTAIN]);
-        expect(&p, "status", "End remote maintain on");
+        expect(&p, "status", "End");
         expect(&p, "power", "ON");
         expect(&p, "remaining_time", "1");
         expect(&p, "energy", "1818");
@@ -412,7 +445,7 @@ mod tests {
     #[test]
     fn pausing_lights_the_drum() {
         let p = feed(&[PAUSES]);
-        expect(&p, "status", "Pause");
+        expect(&p, "status", "Paused");
         expect(&p, "drum_light", "ON");
         expect(&p, "remaining_time", "191");
         expect(&p, "power", "ON");
@@ -468,6 +501,7 @@ mod tests {
         for (opts, name) in tables {
             let mut labels: Vec<&str> = (0..=255).filter_map(name).collect();
             labels.sort_unstable();
+            labels.dedup();
             let mut sorted = opts.to_vec();
             sorted.sort_unstable();
             assert_eq!(labels, sorted);

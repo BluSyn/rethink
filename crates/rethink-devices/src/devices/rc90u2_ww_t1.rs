@@ -396,9 +396,9 @@ mod tests {
         let (ha, thinq, _dev, _timers) = make();
         emit(&thinq, SAMPLE_IDLE_QUICK30);
         assert_eq!(prop(&ha, "power").as_deref(), Some("ON"));
-        assert_eq!(prop(&ha, "status").as_deref(), Some("Ready"));
+        assert_eq!(prop(&ha, "status").as_deref(), Some("Standby"));
         assert_eq!(prop(&ha, "course").as_deref(), Some("Quick Dry"));
-        assert_eq!(prop(&ha, "eco_hybrid").as_deref(), Some("Time"));
+        assert_eq!(prop(&ha, "eco_hybrid").as_deref(), Some("Turbo"));
         assert_eq!(prop(&ha, "remaining_time").as_deref(), Some("30"));
         // Filled in when a cycle starts.
         assert_eq!(prop(&ha, "initial_time").as_deref(), Some("0"));
@@ -410,7 +410,7 @@ mod tests {
     fn running_then_paused() {
         let (ha, thinq, _dev, _timers) = make();
         emit(&thinq, SAMPLE_RUNNING);
-        assert_eq!(prop(&ha, "status").as_deref(), Some("Running"));
+        assert_eq!(prop(&ha, "status").as_deref(), Some("Drying"));
         assert_eq!(prop(&ha, "course").as_deref(), Some("Cotton"));
         assert_eq!(prop(&ha, "dry_level").as_deref(), Some("Extra"));
         assert_eq!(prop(&ha, "remaining_time").as_deref(), Some("160"));
@@ -427,7 +427,7 @@ mod tests {
         emit(&thinq, SAMPLE_RUNNING);
         assert_eq!(prop(&ha, "course").as_deref(), Some("Cotton"));
         assert_eq!(prop(&ha, "dry_level").as_deref(), Some("Extra"));
-        assert_eq!(prop(&ha, "eco_hybrid").as_deref(), Some("Time"));
+        assert_eq!(prop(&ha, "eco_hybrid").as_deref(), Some("Turbo"));
     }
 
     #[test]

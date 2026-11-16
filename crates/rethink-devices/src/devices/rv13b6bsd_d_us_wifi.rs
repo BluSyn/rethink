@@ -36,11 +36,15 @@ const PHASE_OFF: u8 = 0x00;
 
 const STATUS: &[(u8, &str)] = &[
     (0x00, "Off"),
-    (0x01, "Initial"),
-    (0x03, "Pause"),
+    (0x01, "Standby"),
+    (0x02, "Drying"),
+    (0x03, "Paused"),
+    (0x04, "End"),
+    (0x05, "Error"),
+    (0x08, "Smart Diagnosis"),
     (0x32, "Drying"),
     (0x33, "Cooling"),
-    (0x04, "End"),
+    (0x38, "Wrinkle care"),
 ];
 const COURSE: &[(u8, &str)] = &[
     (0x01, "Heavy Duty"),
@@ -149,7 +153,7 @@ impl Device {
 
         self.core.publish_on_off("power", !is_off);
         self.core
-            .publish_property("status", named(STATUS, phase).unwrap_or("Running").into());
+            .publish_property("status", named(STATUS, phase).unwrap_or("None").into());
         self.core.publish_property(
             "course",
             named(COURSE, rec[COURSE_OFFSET]).unwrap_or("None").into(),
@@ -289,7 +293,7 @@ mod tests {
         let (ha, thinq, _) = make();
         emit(&thinq, OFF_TO_INITIAL);
         expect(&ha, "power", "ON");
-        expect(&ha, "status", "Initial");
+        expect(&ha, "status", "Standby");
     }
 
     #[test]
@@ -317,7 +321,7 @@ mod tests {
     fn pause_then_antibacterial_shows_very_dry_and_high_temp() {
         let (ha, thinq, _) = make();
         emit(&thinq, PAUSE_THEN_ANTIBACTERIAL_SELECTED);
-        expect(&ha, "status", "Initial");
+        expect(&ha, "status", "Standby");
         expect(&ha, "course", "Antibacterial");
         expect(&ha, "dry_level", "Very");
         expect(&ha, "temp", "High");

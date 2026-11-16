@@ -40,8 +40,11 @@ const PHASE_OFF: u8 = 0x00;
 
 const STATUS: &[(u8, &str)] = &[
     (0x00, "Off"),
-    (0x01, "Initial"),
-    (0x03, "Pause"),
+    (0x01, "Standby"),
+    (0x02, "Drying"),
+    (0x03, "Paused"),
+    (0x05, "Error"),
+    (0x08, "Smart Diagnosis"),
     (0x32, "Drying"),
     (0x33, "Cooling"),
     (0x04, "End"),
@@ -157,7 +160,7 @@ impl Device {
 
         self.core.publish_on_off("power", !is_off);
         self.core
-            .publish_property("status", named(STATUS, phase).unwrap_or("Running").into());
+            .publish_property("status", named(STATUS, phase).unwrap_or("None").into());
         self.core.publish_property(
             "course",
             named(COURSE, rec[COURSE_OFFSET]).unwrap_or("None").into(),
@@ -327,7 +330,7 @@ mod tests {
     fn power_on_with_normal_selected() {
         let p = feed(&[POWER_ON_NORMAL]);
         expect(&p, "power", "ON");
-        expect(&p, "status", "Initial");
+        expect(&p, "status", "Standby");
         expect(&p, "course", "Normal");
         expect(&p, "dry_level", "Normal");
         expect(&p, "temp", "Mid High");
@@ -406,7 +409,7 @@ mod tests {
         expect(&start, "temp", "Low");
         expect(&start, "dry_level", "None");
 
-        expect(&feed(&[STARTS_DRYING, PAUSES]), "status", "Pause");
+        expect(&feed(&[STARTS_DRYING, PAUSES]), "status", "Paused");
         expect(&feed(&[STARTS_DRYING, PAUSES, RESUMES]), "status", "Drying");
 
         let cooling = feed(&[STARTS_DRYING, PAUSES, RESUMES, COOLING]);
